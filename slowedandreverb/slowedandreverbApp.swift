@@ -1149,8 +1149,21 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
     }
     
     private func updatePlayPauseButtonState() {
-        let imageName = audioProcessor.isCurrentlyPlaying() ? "pause.fill" : "play.fill"
+        let isPlaying = audioProcessor.isCurrentlyPlaying()
+        let imageName = isPlaying ? "pause.fill" : "play.fill"
         playPauseButton.setImage(UIImage(systemName: imageName), for: .normal)
+        
+        // Animate the album art based on playback state
+        let targetTransform = isPlaying ? .identity : CGAffineTransform(scaleX: 0.85, y: 0.85)
+        
+        UIView.animate(withDuration: 0.6,
+                       delay: 0,
+                       usingSpringWithDamping: 0.6,
+                       initialSpringVelocity: 0.8,
+                       options: [.allowUserInteraction, .beginFromCurrentState],
+                       animations: {
+            self.albumArtImageView.transform = targetTransform
+        }, completion: nil)
     }
     
     
@@ -1465,6 +1478,9 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
             if andPlay {
                 // Automatically start playing
                 togglePlayback()
+            } else {
+                // If not playing, update the button state (and album art size)
+                updatePlayPauseButtonState()
             }
         } else {
             // Handle error (e.g., failed to load)
