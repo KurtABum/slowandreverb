@@ -369,6 +369,7 @@ class SettingsViewController: UIViewController {
     var isResetSlidersOnTapEnabled: Bool = true
     var isTapArtworkToChangeSongEnabled: Bool = true
     var isPrecisePitchEnabled: Bool = true
+    private let impactFeedbackGenerator = UIImpactFeedbackGenerator(style: .light)
     
     private let scrollView = UIScrollView()
 
@@ -399,6 +400,7 @@ class SettingsViewController: UIViewController {
         super.viewDidLoad()
         setupUI()
         title = "Settings"
+        impactFeedbackGenerator.prepare()
         navigationItem.rightBarButtonItem = UIBarButtonItem(barButtonSystemItem: .close, target: self, action: #selector(dismissSettings))
     }
 
@@ -556,6 +558,7 @@ class SettingsViewController: UIViewController {
             button.addAction(UIAction { [weak self] _ in
                 self?.delegate?.settingsViewController(self!, didChangeTheme: theme)
                 self?.dismiss(animated: true)
+                self?.impactFeedbackGenerator.impactOccurred()
             }, for: .touchUpInside)
             colorButtonsStack.addArrangedSubview(button)
         }
@@ -586,34 +589,42 @@ class SettingsViewController: UIViewController {
     
     @objc private func dismissSettings() {
         dismiss(animated: true, completion: nil)
+        impactFeedbackGenerator.impactOccurred()
     }
 
     @objc private func linkPitchSwitchChanged(_ sender: UISwitch) {
         delegate?.settingsViewController(self, didChangeLinkPitchState: sender.isOn)
+        impactFeedbackGenerator.impactOccurred()
     }
     
     @objc private func dynamicBackgroundSwitchChanged(_ sender: UISwitch) {
         delegate?.settingsViewController(self, didChangeDynamicBackgroundState: sender.isOn)
+        impactFeedbackGenerator.impactOccurred()
     }
     
     @objc private func dynamicThemeSwitchChanged(_ sender: UISwitch) {
         delegate?.settingsViewController(self, didChangeDynamicThemeState: sender.isOn)
         themeStack.isHidden = sender.isOn
+        impactFeedbackGenerator.impactOccurred()
     }
     
     @objc private func reverbSliderSwitchChanged(_ sender: UISwitch) {
         delegate?.settingsViewController(self, didChangeReverbSliderState: sender.isOn)
+        impactFeedbackGenerator.impactOccurred()
     }
     
     @objc private func resetSlidersOnTapSwitchChanged(_ sender: UISwitch) {
         delegate?.settingsViewController(self, didChangeResetSlidersOnTapState: sender.isOn)
+        impactFeedbackGenerator.impactOccurred()
     }
     
     @objc private func tapArtworkSwitchChanged(_ sender: UISwitch) {
         delegate?.settingsViewController(self, didChangeTapArtworkToChangeSongState: sender.isOn)
+        impactFeedbackGenerator.impactOccurred()
     }
     
     @objc private func precisePitchSwitchChanged(_ sender: UISwitch) {
+        impactFeedbackGenerator.impactOccurred()
         delegate?.settingsViewController(self, didChangePrecisePitchState: sender.isOn)
     }
 }
@@ -625,6 +636,8 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
     // MARK: Properties
     
     private let audioProcessor = AudioProcessor()
+    private let impactFeedbackGenerator = UIImpactFeedbackGenerator(style: .medium)
+    private let selectionFeedbackGenerator = UISelectionFeedbackGenerator()
     
     // Background Image View
     private let backgroundImageView = UIImageView()
@@ -663,18 +676,23 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
     
     // Settings state
     private var isPrecisePitchEnabled = true
+    private var lastSnappedPitchValue: Float = 0.0 // To track discrete pitch changes for haptics
     
     // MARK: View Lifecycle
     
     private var hasLoadedInitialState = false
 
     override func viewDidLoad() {
+        self.isPrecisePitchEnabled = UserDefaults.standard.bool(forKey: "isPrecisePitchEnabled", defaultValue: true)
         super.viewDidLoad()
         setupUI()
         resetControlsState(isHidden: true)
         setupAudioProcessorHandler()
         setupStatePersistence()
         setupProgressUpdater()
+        setupSliderLabelTapGestures(isEnabled: UserDefaults.standard.bool(forKey: "isResetSlidersOnTapEnabled"))
+        impactFeedbackGenerator.prepare()
+        selectionFeedbackGenerator.prepare()
     }
     
     override func viewDidAppear(_ animated: Bool) {
@@ -938,27 +956,34 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
     @objc private func resetSliders() {
         speedSlider.value = 1.0
         pitchSlider.value = 0.0
+        lastSnappedPitchValue = 0.0 // Reset for haptics
         reverbSlider.value = 0.0
 
         // Trigger the change handlers to update labels and the audio processor
         speedSliderChanged(speedSlider)
         pitchSliderChanged(pitchSlider)
         reverbSliderChanged(reverbSlider)
+        impactFeedbackGenerator.impactOccurred() // Add haptic feedback for the global reset button
     }
-
+    
     @objc private func resetPitchSlider() {
         pitchSlider.value = 0.0
+        lastSnappedPitchValue = 0.0 // Reset for haptics
         pitchSliderChanged(pitchSlider)
+        impactFeedbackGenerator.impactOccurred()
     }
 
     @objc private func resetSpeedSlider() {
         speedSlider.value = 1.0
         speedSliderChanged(speedSlider)
+        impactFeedbackGenerator.impactOccurred()
     }
+
 
     @objc private func resetReverbSlider() {
         reverbSlider.value = 0.0
         reverbSliderChanged(reverbSlider)
+        impactFeedbackGenerator.impactOccurred()
     }
 
     // MARK: State Persistence
@@ -1089,12 +1114,14 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
     @objc func togglePlayback() {
         audioProcessor.togglePlayback()
         updatePlayPauseButtonState()
+        impactFeedbackGenerator.impactOccurred()
     }
     
     private func updatePlayPauseButtonState() {
         let imageName = audioProcessor.isCurrentlyPlaying() ? "pause.fill" : "play.fill"
         playPauseButton.setImage(UIImage(systemName: imageName), for: .normal)
     }
+    
     
     @objc func progressSliderScrubbing(_ sender: UISlider) {
         audioProcessor.seek(to: Double(sender.value))
@@ -1119,6 +1146,7 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         // Present as a sheet
         if let sheet = navController.sheetPresentationController {
             sheet.detents = [.medium()]
+            impactFeedbackGenerator.impactOccurred()
         }
         present(navController, animated: true)
     }
@@ -1242,9 +1270,16 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         let pitchInCents = sender.value
         
         var finalPitch = pitchInCents
+        
         if !isPrecisePitchEnabled {
             let roundedPitch = (pitchInCents / 100.0).rounded() * 100.0
-            sender.value = roundedPitch // Snap the slider to the rounded value
+            
+            if roundedPitch != lastSnappedPitchValue {
+                selectionFeedbackGenerator.selectionChanged()
+                lastSnappedPitchValue = roundedPitch
+            }
+            
+            sender.value = roundedPitch // Snap the slider's visual position
             finalPitch = roundedPitch
         }
         audioProcessor.setPitch(pitch: finalPitch)
@@ -1314,6 +1349,7 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         picker.delegate = self
         picker.allowsMultipleSelection = false
         
+        impactFeedbackGenerator.impactOccurred()
         present(picker, animated: true, completion: nil)
     }
 
@@ -1399,12 +1435,14 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         audioProcessor.seek(to: newTime)
         progressSlider.value = Float(newTime)
         currentTimeLabel.text = formatTime(seconds: newTime)
+        impactFeedbackGenerator.impactOccurred()
         audioProcessor.updateNowPlayingInfo(isPaused: !audioProcessor.isCurrentlyPlaying())
     }
 
     @objc private func skip10Seconds() {
         let currentTime = audioProcessor.getCurrentTime()
         let duration = audioProcessor.getAudioDuration()
+        impactFeedbackGenerator.impactOccurred()
         let newTime = min(duration, currentTime + 10)
         audioProcessor.seek(to: newTime)
         progressSlider.value = Float(newTime)
