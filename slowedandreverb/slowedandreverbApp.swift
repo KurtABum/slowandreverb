@@ -353,6 +353,8 @@ protocol SettingsViewControllerDelegate: AnyObject {
     func settingsViewController(_ controller: SettingsViewController, didChangeDynamicThemeState isEnabled: Bool)
     func settingsViewController(_ controller: SettingsViewController, didChangeTheme theme: ThemeColor)
     func settingsViewController(_ controller: SettingsViewController, didChangeReverbSliderState isEnabled: Bool)
+    func settingsViewController(_ controller: SettingsViewController, didChangeResetSlidersOnTapState isEnabled: Bool)
+    func settingsViewController(_ controller: SettingsViewController, didChangeTapArtworkToChangeSongState isEnabled: Bool)
 }
 
 /// A simple view controller to display app settings.
@@ -363,6 +365,10 @@ class SettingsViewController: UIViewController {
     var isDynamicThemeEnabled: Bool = false
     var currentTheme: ThemeColor = .blue
     var isReverbSliderEnabled: Bool = true
+    var isResetSlidersOnTapEnabled: Bool = true
+    var isTapArtworkToChangeSongEnabled: Bool = true
+    
+    private let scrollView = UIScrollView()
 
     private let linkPitchSwitch = UISwitch()
     private let linkPitchLabel = UILabel()
@@ -376,58 +382,135 @@ class SettingsViewController: UIViewController {
     private let reverbSliderSwitch = UISwitch()
     private let reverbSliderLabel = UILabel()
     
+    private let resetSlidersOnTapSwitch = UISwitch()
+    private let resetSlidersOnTapLabel = UILabel()
+    
+    private let tapArtworkSwitch = UISwitch()
+    private let tapArtworkLabel = UILabel()
+    
     private var themeStack: UIStackView!
 
     override func viewDidLoad() {
         super.viewDidLoad()
         setupUI()
-        title = "Settings" // Set the title for the sheet
+        title = "Settings"
+        navigationItem.rightBarButtonItem = UIBarButtonItem(barButtonSystemItem: .close, target: self, action: #selector(dismissSettings))
     }
 
     private func setupUI() {
         view.backgroundColor = .systemGroupedBackground
+        
+        // Add scroll view to the main view
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(scrollView)
+        
+        NSLayoutConstraint.activate([
+            scrollView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor)
+        ])
 
+        // Helper to create description labels
+        func createDescriptionLabel(with text: String) -> UILabel {
+            let label = UILabel()
+            label.text = text
+            label.font = .systemFont(ofSize: 13)
+            label.textColor = .secondaryLabel
+            label.numberOfLines = 0
+            return label
+        }
+
+        // --- Link Pitch Setting ---
         linkPitchLabel.text = "Link Pitch to Speed"
         linkPitchSwitch.isOn = isPitchLinked
         linkPitchSwitch.addTarget(self, action: #selector(linkPitchSwitchChanged), for: .valueChanged)
-
         let linkPitchStack = UIStackView(arrangedSubviews: [linkPitchLabel, linkPitchSwitch])
         linkPitchStack.spacing = 20
-        
-        // Dynamic Background UI
+        let linkPitchDescription = createDescriptionLabel(with: "When enabled, changing the speed will also adjust the pitch, like a record player.")
+        let linkPitchGroup = UIStackView(arrangedSubviews: [linkPitchStack, linkPitchDescription])
+        linkPitchGroup.axis = .vertical
+        linkPitchGroup.spacing = 4
+
+        // --- Dynamic Background Setting ---
         dynamicBackgroundLabel.text = "Dynamic Background"
         dynamicBackgroundSwitch.isOn = isDynamicBackgroundEnabled
         dynamicBackgroundSwitch.addTarget(self, action: #selector(dynamicBackgroundSwitchChanged), for: .valueChanged)
-        
         let dynamicBackgroundStack = UIStackView(arrangedSubviews: [dynamicBackgroundLabel, dynamicBackgroundSwitch])
         dynamicBackgroundStack.spacing = 20
-        
-        // Dynamic Theme UI
+        let dynamicBackgroundDescription = createDescriptionLabel(with: "Uses the song's album art to create a blurred background.")
+        let dynamicBackgroundGroup = UIStackView(arrangedSubviews: [dynamicBackgroundStack, dynamicBackgroundDescription])
+        dynamicBackgroundGroup.axis = .vertical
+        dynamicBackgroundGroup.spacing = 4
+
+        // --- Dynamic Theme Setting ---
         dynamicThemeLabel.text = "Dynamic Theme"
         dynamicThemeSwitch.isOn = isDynamicThemeEnabled
         dynamicThemeSwitch.addTarget(self, action: #selector(dynamicThemeSwitchChanged), for: .valueChanged)
-        
         let dynamicThemeStack = UIStackView(arrangedSubviews: [dynamicThemeLabel, dynamicThemeSwitch])
         dynamicThemeStack.spacing = 20
-        
-        // Reverb Slider Toggle UI
+        let dynamicThemeDescription = createDescriptionLabel(with: "Automatically picks a theme color from the song's album art.")
+        let dynamicThemeGroup = UIStackView(arrangedSubviews: [dynamicThemeStack, dynamicThemeDescription])
+        dynamicThemeGroup.axis = .vertical
+        dynamicThemeGroup.spacing = 4
+
+        // --- Reverb Slider Setting ---
         reverbSliderLabel.text = "Show Reverb Slider"
         reverbSliderSwitch.isOn = isReverbSliderEnabled
         reverbSliderSwitch.addTarget(self, action: #selector(reverbSliderSwitchChanged), for: .valueChanged)
-        
         let reverbSliderStack = UIStackView(arrangedSubviews: [reverbSliderLabel, reverbSliderSwitch])
         reverbSliderStack.spacing = 20
+        let reverbSliderDescription = createDescriptionLabel(with: "Shows or hides the reverb effect slider on the main screen.")
+        let reverbSliderGroup = UIStackView(arrangedSubviews: [reverbSliderStack, reverbSliderDescription])
+        reverbSliderGroup.axis = .vertical
+        reverbSliderGroup.spacing = 4
 
-        let settingsOptionsStack = UIStackView(arrangedSubviews: [linkPitchStack, dynamicBackgroundStack, dynamicThemeStack, reverbSliderStack])
+        // --- Double-Tap to Reset Setting ---
+        resetSlidersOnTapLabel.text = "Double-Tap to Reset Sliders"
+        resetSlidersOnTapSwitch.isOn = isResetSlidersOnTapEnabled
+        resetSlidersOnTapSwitch.addTarget(self, action: #selector(resetSlidersOnTapSwitchChanged), for: .valueChanged)
+        let resetSlidersOnTapStack = UIStackView(arrangedSubviews: [resetSlidersOnTapLabel, resetSlidersOnTapSwitch])
+        resetSlidersOnTapStack.spacing = 20
+        let resetSlidersOnTapDescription = createDescriptionLabel(with: "Allows you to double-tap on the 'Pitch', 'Speed', or 'Reverb' labels to reset their values.")
+        let resetSlidersOnTapGroup = UIStackView(arrangedSubviews: [resetSlidersOnTapStack, resetSlidersOnTapDescription])
+        resetSlidersOnTapGroup.axis = .vertical
+        resetSlidersOnTapGroup.spacing = 4
+
+        // --- Tap Artwork to Change Song Setting ---
+        tapArtworkLabel.text = "Tap Artwork to Change Song"
+        tapArtworkSwitch.isOn = isTapArtworkToChangeSongEnabled
+        tapArtworkSwitch.addTarget(self, action: #selector(tapArtworkSwitchChanged), for: .valueChanged)
+        let tapArtworkStack = UIStackView(arrangedSubviews: [tapArtworkLabel, tapArtworkSwitch])
+        tapArtworkStack.spacing = 20
+        let tapArtworkDescription = createDescriptionLabel(with: "Allows you to tap the album artwork to open the file picker and choose a new song.")
+        let tapArtworkGroup = UIStackView(arrangedSubviews: [tapArtworkStack, tapArtworkDescription])
+        tapArtworkGroup.axis = .vertical
+        tapArtworkGroup.spacing = 4
+
+        // --- Main Settings Stack ---
+        let settingsOptionsStack = UIStackView(arrangedSubviews: [
+            linkPitchGroup,
+            dynamicBackgroundGroup,
+            dynamicThemeGroup,
+            reverbSliderGroup,
+            resetSlidersOnTapGroup,
+            tapArtworkGroup
+        ])
         settingsOptionsStack.axis = .vertical
-        settingsOptionsStack.spacing = 15
+        settingsOptionsStack.spacing = 25
         settingsOptionsStack.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(settingsOptionsStack)
+        
+        // Create a content view inside the scroll view to hold all elements
+        let contentView = UIView()
+        contentView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.addSubview(contentView)
+        
+        contentView.addSubview(settingsOptionsStack)
 
         NSLayoutConstraint.activate([
-            settingsOptionsStack.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 20),
-            settingsOptionsStack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
-            settingsOptionsStack.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20)
+            settingsOptionsStack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 20),
+            settingsOptionsStack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
+            settingsOptionsStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20)
         ])
         
         // Theme Selection UI
@@ -464,16 +547,28 @@ class SettingsViewController: UIViewController {
         themeStack.axis = .vertical
         themeStack.spacing = 15
         themeStack.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(themeStack)
+        contentView.addSubview(themeStack)
         
         NSLayoutConstraint.activate([
             themeStack.topAnchor.constraint(equalTo: settingsOptionsStack.bottomAnchor, constant: 40),
-            themeStack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
-            themeStack.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
+            themeStack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
+            themeStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
+            themeStack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -20), // Important for contentSize
+            
+            // Content view constraints to scroll view
+            contentView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
+            contentView.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
+            contentView.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
+            contentView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
+            contentView.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor) // Ensure vertical scrolling only
         ])
         
         // Initial state for theme picker
         themeStack.isHidden = isDynamicThemeEnabled
+    }
+    
+    @objc private func dismissSettings() {
+        dismiss(animated: true, completion: nil)
     }
 
     @objc private func linkPitchSwitchChanged(_ sender: UISwitch) {
@@ -491,6 +586,14 @@ class SettingsViewController: UIViewController {
     
     @objc private func reverbSliderSwitchChanged(_ sender: UISwitch) {
         delegate?.settingsViewController(self, didChangeReverbSliderState: sender.isOn)
+    }
+    
+    @objc private func resetSlidersOnTapSwitchChanged(_ sender: UISwitch) {
+        delegate?.settingsViewController(self, didChangeResetSlidersOnTapState: sender.isOn)
+    }
+    
+    @objc private func tapArtworkSwitchChanged(_ sender: UISwitch) {
+        delegate?.settingsViewController(self, didChangeTapArtworkToChangeSongState: sender.isOn)
     }
 }
 
@@ -533,6 +636,9 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
     // New buttons for rewind and skip
     private let rewindButton = UIButton(type: .system)
     private let skipButton = UIButton(type: .system)
+    
+    // Gesture Recognizers
+    private let albumArtTapGesture = UITapGestureRecognizer()
     
     // MARK: View Lifecycle
     
@@ -607,8 +713,8 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         
         // Enable user interaction and add tap gesture to open file picker
         albumArtImageView.isUserInteractionEnabled = true
-        let tapGesture = UITapGestureRecognizer(target: self, action: #selector(openFilePicker))
-        albumArtImageView.addGestureRecognizer(tapGesture)
+        albumArtTapGesture.addTarget(self, action: #selector(openFilePicker))
+        albumArtImageView.addGestureRecognizer(albumArtTapGesture)
         
         // 2. Song Title Setup
         songTitleLabel.font = .systemFont(ofSize: 18, weight: .semibold)
@@ -858,10 +964,14 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
                 let isDynamicBackgroundEnabled = UserDefaults.standard.bool(forKey: "isDynamicBackgroundEnabled")
                 let isDynamicThemeEnabled = UserDefaults.standard.bool(forKey: "isDynamicThemeEnabled")
                 let isReverbSliderEnabled = UserDefaults.standard.bool(forKey: "isReverbSliderEnabled")
+                let isResetSlidersOnTapEnabled = UserDefaults.standard.bool(forKey: "isResetSlidersOnTapEnabled")
+                let isTapArtworkToChangeSongEnabled = UserDefaults.standard.bool(forKey: "isTapArtworkToChangeSongEnabled")
                 
                 settingsViewController(SettingsViewController(), didChangeReverbSliderState: isReverbSliderEnabled)
                 settingsViewController(SettingsViewController(), didChangeDynamicBackgroundState: isDynamicBackgroundEnabled)
                 settingsViewController(SettingsViewController(), didChangeDynamicThemeState: isDynamicThemeEnabled)
+                settingsViewController(SettingsViewController(), didChangeResetSlidersOnTapState: isResetSlidersOnTapEnabled)
+                settingsViewController(SettingsViewController(), didChangeTapArtworkToChangeSongState: isTapArtworkToChangeSongEnabled)
                 
                 // Restore slider values after other settings are applied
                 let pitch = UserDefaults.standard.float(forKey: "pitchValue")
@@ -968,12 +1078,17 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         settingsVC.isDynamicBackgroundEnabled = UserDefaults.standard.bool(forKey: "isDynamicBackgroundEnabled")
         settingsVC.isDynamicThemeEnabled = UserDefaults.standard.bool(forKey: "isDynamicThemeEnabled")
         settingsVC.isReverbSliderEnabled = UserDefaults.standard.bool(forKey: "isReverbSliderEnabled")
+        settingsVC.isResetSlidersOnTapEnabled = UserDefaults.standard.bool(forKey: "isResetSlidersOnTapEnabled")
+        settingsVC.isTapArtworkToChangeSongEnabled = UserDefaults.standard.bool(forKey: "isTapArtworkToChangeSongEnabled")
+        
+        // Embed the SettingsViewController in a UINavigationController to display a navigation bar
+        let navController = UINavigationController(rootViewController: settingsVC)
         
         // Present as a sheet
-        if let sheet = settingsVC.sheetPresentationController {
+        if let sheet = navController.sheetPresentationController {
             sheet.detents = [.medium()]
         }
-        present(settingsVC, animated: true)
+        present(navController, animated: true)
     }
     
     // MARK: SettingsViewControllerDelegate
@@ -1001,6 +1116,16 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         UserDefaults.standard.set(isEnabled, forKey: "isReverbSliderEnabled")
         reverbLabel.isHidden = !isEnabled
         reverbSlider.isHidden = !isEnabled
+    }
+    
+    func settingsViewController(_ controller: SettingsViewController, didChangeResetSlidersOnTapState isEnabled: Bool) {
+        UserDefaults.standard.set(isEnabled, forKey: "isResetSlidersOnTapEnabled")
+        setupSliderLabelTapGestures(isEnabled: isEnabled)
+    }
+    
+    func settingsViewController(_ controller: SettingsViewController, didChangeTapArtworkToChangeSongState isEnabled: Bool) {
+        UserDefaults.standard.set(isEnabled, forKey: "isTapArtworkToChangeSongEnabled")
+        albumArtTapGesture.isEnabled = isEnabled
     }
     
     private func updateBackground(with image: UIImage?, isDynamicEnabled: Bool? = nil) {
@@ -1083,23 +1208,31 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         pitchLabel.text = String(format: "Pitch (%d st)", semitones)
     }
     
-    private func setupSliderLabelTapGestures() {
-        let pitchTap = UITapGestureRecognizer(target: self, action: #selector(resetPitchSlider))
-        pitchTap.numberOfTapsRequired = 2
-        pitchLabel.isUserInteractionEnabled = true
-        pitchLabel.addGestureRecognizer(pitchTap)
+    private func setupSliderLabelTapGestures(isEnabled: Bool) {
+        // Remove any existing gestures to avoid duplicates
+        pitchLabel.gestureRecognizers?.forEach(pitchLabel.removeGestureRecognizer)
+        speedLabel.gestureRecognizers?.forEach(speedLabel.removeGestureRecognizer)
+        reverbLabel.gestureRecognizers?.forEach(reverbLabel.removeGestureRecognizer)
+        
+        pitchLabel.isUserInteractionEnabled = isEnabled
+        speedLabel.isUserInteractionEnabled = isEnabled
+        reverbLabel.isUserInteractionEnabled = isEnabled
+        
+        if isEnabled {
+            let pitchTap = UITapGestureRecognizer(target: self, action: #selector(resetPitchSlider))
+            pitchTap.numberOfTapsRequired = 2
+            pitchLabel.addGestureRecognizer(pitchTap)
 
-        let speedTap = UITapGestureRecognizer(target: self, action: #selector(resetSpeedSlider))
-        speedTap.numberOfTapsRequired = 2
-        speedLabel.isUserInteractionEnabled = true
-        speedLabel.addGestureRecognizer(speedTap)
+            let speedTap = UITapGestureRecognizer(target: self, action: #selector(resetSpeedSlider))
+            speedTap.numberOfTapsRequired = 2
+            speedLabel.addGestureRecognizer(speedTap)
 
-        let reverbTap = UITapGestureRecognizer(target: self, action: #selector(resetReverbSlider))
-        reverbTap.numberOfTapsRequired = 2
-        reverbLabel.isUserInteractionEnabled = true
-        reverbLabel.addGestureRecognizer(reverbTap)
+            let reverbTap = UITapGestureRecognizer(target: self, action: #selector(resetReverbSlider))
+            reverbTap.numberOfTapsRequired = 2
+            reverbLabel.addGestureRecognizer(reverbTap)
+        }
     }
-
+    
     @objc func speedSliderChanged(_ sender: UISlider) {
         let rate = sender.value
         UserDefaults.standard.set(rate, forKey: "speedValue")
@@ -1164,8 +1297,6 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
             artistNameLabel.isHidden = metadata.artist == nil
             
             let newImage: UIImage
-
-            setupSliderLabelTapGestures()
 
             if let artwork = metadata.artwork {
                 newImage = artwork.cgImage != nil ? artwork : UIImage(systemName: "music.note.list")!
@@ -1255,7 +1386,9 @@ struct AudioEffectsApp: App {
         UserDefaults.standard.register(defaults: [
             "isDynamicBackgroundEnabled": true,
             "isDynamicThemeEnabled": true,
-            "isReverbSliderEnabled": true
+            "isReverbSliderEnabled": true,
+            "isResetSlidersOnTapEnabled": true,
+            "isTapArtworkToChangeSongEnabled": true
         ])
     }
     var body: some Scene {
