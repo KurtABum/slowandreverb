@@ -355,6 +355,7 @@ protocol SettingsViewControllerDelegate: AnyObject {
     func settingsViewController(_ controller: SettingsViewController, didChangeReverbSliderState isEnabled: Bool)
     func settingsViewController(_ controller: SettingsViewController, didChangeResetSlidersOnTapState isEnabled: Bool)
     func settingsViewController(_ controller: SettingsViewController, didChangeTapArtworkToChangeSongState isEnabled: Bool)
+    func settingsViewController(_ controller: SettingsViewController, didChangePrecisePitchState isEnabled: Bool)
 }
 
 /// A simple view controller to display app settings.
@@ -367,6 +368,7 @@ class SettingsViewController: UIViewController {
     var isReverbSliderEnabled: Bool = true
     var isResetSlidersOnTapEnabled: Bool = true
     var isTapArtworkToChangeSongEnabled: Bool = true
+    var isPrecisePitchEnabled: Bool = true
     
     private let scrollView = UIScrollView()
 
@@ -387,6 +389,9 @@ class SettingsViewController: UIViewController {
     
     private let tapArtworkSwitch = UISwitch()
     private let tapArtworkLabel = UILabel()
+    
+    private let precisePitchSwitch = UISwitch()
+    private let precisePitchLabel = UILabel()
     
     private var themeStack: UIStackView!
 
@@ -486,12 +491,24 @@ class SettingsViewController: UIViewController {
         let tapArtworkGroup = UIStackView(arrangedSubviews: [tapArtworkStack, tapArtworkDescription])
         tapArtworkGroup.axis = .vertical
         tapArtworkGroup.spacing = 4
+        
+        // --- Precise Pitch Setting ---
+        precisePitchLabel.text = "Precise Pitch"
+        precisePitchSwitch.isOn = isPrecisePitchEnabled
+        precisePitchSwitch.addTarget(self, action: #selector(precisePitchSwitchChanged), for: .valueChanged)
+        let precisePitchStack = UIStackView(arrangedSubviews: [precisePitchLabel, precisePitchSwitch])
+        precisePitchStack.spacing = 20
+        let precisePitchDescription = createDescriptionLabel(with: "When disabled, the pitch slider will snap to whole semitones.")
+        let precisePitchGroup = UIStackView(arrangedSubviews: [precisePitchStack, precisePitchDescription])
+        precisePitchGroup.axis = .vertical
+        precisePitchGroup.spacing = 4
 
         // --- Main Settings Stack ---
         let settingsOptionsStack = UIStackView(arrangedSubviews: [
             linkPitchGroup,
             dynamicBackgroundGroup,
             dynamicThemeGroup,
+            precisePitchGroup,
             reverbSliderGroup,
             resetSlidersOnTapGroup,
             tapArtworkGroup
@@ -595,6 +612,10 @@ class SettingsViewController: UIViewController {
     @objc private func tapArtworkSwitchChanged(_ sender: UISwitch) {
         delegate?.settingsViewController(self, didChangeTapArtworkToChangeSongState: sender.isOn)
     }
+    
+    @objc private func precisePitchSwitchChanged(_ sender: UISwitch) {
+        delegate?.settingsViewController(self, didChangePrecisePitchState: sender.isOn)
+    }
 }
 
 // MARK: - 2. User Interface and File Picker
@@ -639,6 +660,9 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
     
     // Gesture Recognizers
     private let albumArtTapGesture = UITapGestureRecognizer()
+    
+    // Settings state
+    private var isPrecisePitchEnabled = true
     
     // MARK: View Lifecycle
     
@@ -971,12 +995,14 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
                 let isReverbSliderEnabled = UserDefaults.standard.bool(forKey: "isReverbSliderEnabled")
                 let isResetSlidersOnTapEnabled = UserDefaults.standard.bool(forKey: "isResetSlidersOnTapEnabled")
                 let isTapArtworkToChangeSongEnabled = UserDefaults.standard.bool(forKey: "isTapArtworkToChangeSongEnabled")
+                let isPrecisePitchEnabled = UserDefaults.standard.bool(forKey: "isPrecisePitchEnabled", defaultValue: true)
                 
                 settingsViewController(SettingsViewController(), didChangeReverbSliderState: isReverbSliderEnabled)
                 settingsViewController(SettingsViewController(), didChangeDynamicBackgroundState: isDynamicBackgroundEnabled)
                 settingsViewController(SettingsViewController(), didChangeDynamicThemeState: isDynamicThemeEnabled)
                 settingsViewController(SettingsViewController(), didChangeResetSlidersOnTapState: isResetSlidersOnTapEnabled)
                 settingsViewController(SettingsViewController(), didChangeTapArtworkToChangeSongState: isTapArtworkToChangeSongEnabled)
+                settingsViewController(SettingsViewController(), didChangePrecisePitchState: isPrecisePitchEnabled)
                 
                 // Restore slider values after other settings are applied
                 let pitch = UserDefaults.standard.float(forKey: "pitchValue")
@@ -1085,6 +1111,7 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         settingsVC.isReverbSliderEnabled = UserDefaults.standard.bool(forKey: "isReverbSliderEnabled")
         settingsVC.isResetSlidersOnTapEnabled = UserDefaults.standard.bool(forKey: "isResetSlidersOnTapEnabled")
         settingsVC.isTapArtworkToChangeSongEnabled = UserDefaults.standard.bool(forKey: "isTapArtworkToChangeSongEnabled")
+        settingsVC.isPrecisePitchEnabled = self.isPrecisePitchEnabled
         
         // Embed the SettingsViewController in a UINavigationController to display a navigation bar
         let navController = UINavigationController(rootViewController: settingsVC)
@@ -1131,6 +1158,12 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
     func settingsViewController(_ controller: SettingsViewController, didChangeTapArtworkToChangeSongState isEnabled: Bool) {
         UserDefaults.standard.set(isEnabled, forKey: "isTapArtworkToChangeSongEnabled")
         albumArtTapGesture.isEnabled = isEnabled
+    }
+    
+    func settingsViewController(_ controller: SettingsViewController, didChangePrecisePitchState isEnabled: Bool) {
+        self.isPrecisePitchEnabled = isEnabled
+        UserDefaults.standard.set(isEnabled, forKey: "isPrecisePitchEnabled")
+        pitchSliderChanged(pitchSlider) // Re-evaluate current pitch value
     }
     
     private func updateBackground(with image: UIImage?, isDynamicEnabled: Bool? = nil) {
@@ -1207,7 +1240,14 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
     }
     @objc func pitchSliderChanged(_ sender: UISlider) {
         let pitchInCents = sender.value
-        audioProcessor.setPitch(pitch: pitchInCents)
+        
+        var finalPitch = pitchInCents
+        if !isPrecisePitchEnabled {
+            let roundedPitch = (pitchInCents / 100.0).rounded() * 100.0
+            sender.value = roundedPitch // Snap the slider to the rounded value
+            finalPitch = roundedPitch
+        }
+        audioProcessor.setPitch(pitch: finalPitch)
         UserDefaults.standard.set(pitchInCents, forKey: "pitchValue")
         let semitones = Int((pitchInCents / 100.0).rounded())
         pitchLabel.text = String(format: "Pitch (%d st)", semitones)
@@ -1373,6 +1413,15 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
     }
 }
 
+// Helper extension to provide a default value for bool(forKey:)
+extension UserDefaults {
+    func bool(forKey defaultName: String, defaultValue: Bool) -> Bool {
+        if object(forKey: defaultName) == nil {
+            return defaultValue
+        }
+        return bool(forKey: defaultName)
+    }
+}
 // MARK: - 3. SwiftUI Preview and App Entry Point
 
 /// Wraps the UIKit ViewController for display in the SwiftUI Canvas Preview.
@@ -1397,7 +1446,8 @@ struct AudioEffectsApp: App {
             "isDynamicThemeEnabled": true,
             "isReverbSliderEnabled": true,
             "isResetSlidersOnTapEnabled": true,
-            "isTapArtworkToChangeSongEnabled": true
+            "isTapArtworkToChangeSongEnabled": true,
+            "isPrecisePitchEnabled": true
         ])
     }
     var body: some Scene {
