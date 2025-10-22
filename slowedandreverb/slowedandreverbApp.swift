@@ -352,6 +352,7 @@ protocol SettingsViewControllerDelegate: AnyObject {
     func settingsViewController(_ controller: SettingsViewController, didChangeDynamicBackgroundState isEnabled: Bool)
     func settingsViewController(_ controller: SettingsViewController, didChangeDynamicThemeState isEnabled: Bool)
     func settingsViewController(_ controller: SettingsViewController, didChangeTheme theme: ThemeColor)
+    func settingsViewController(_ controller: SettingsViewController, didChangeReverbSliderState isEnabled: Bool)
 }
 
 /// A simple view controller to display app settings.
@@ -361,6 +362,7 @@ class SettingsViewController: UIViewController {
     var isDynamicBackgroundEnabled: Bool = false
     var isDynamicThemeEnabled: Bool = false
     var currentTheme: ThemeColor = .blue
+    var isReverbSliderEnabled: Bool = true
 
     private let linkPitchSwitch = UISwitch()
     private let linkPitchLabel = UILabel()
@@ -370,6 +372,9 @@ class SettingsViewController: UIViewController {
     
     private let dynamicThemeSwitch = UISwitch()
     private let dynamicThemeLabel = UILabel()
+    
+    private let reverbSliderSwitch = UISwitch()
+    private let reverbSliderLabel = UILabel()
     
     private var themeStack: UIStackView!
 
@@ -404,8 +409,16 @@ class SettingsViewController: UIViewController {
         
         let dynamicThemeStack = UIStackView(arrangedSubviews: [dynamicThemeLabel, dynamicThemeSwitch])
         dynamicThemeStack.spacing = 20
+        
+        // Reverb Slider Toggle UI
+        reverbSliderLabel.text = "Show Reverb Slider"
+        reverbSliderSwitch.isOn = isReverbSliderEnabled
+        reverbSliderSwitch.addTarget(self, action: #selector(reverbSliderSwitchChanged), for: .valueChanged)
+        
+        let reverbSliderStack = UIStackView(arrangedSubviews: [reverbSliderLabel, reverbSliderSwitch])
+        reverbSliderStack.spacing = 20
 
-        let settingsOptionsStack = UIStackView(arrangedSubviews: [linkPitchStack, dynamicBackgroundStack, dynamicThemeStack])
+        let settingsOptionsStack = UIStackView(arrangedSubviews: [linkPitchStack, dynamicBackgroundStack, dynamicThemeStack, reverbSliderStack])
         settingsOptionsStack.axis = .vertical
         settingsOptionsStack.spacing = 15
         settingsOptionsStack.translatesAutoresizingMaskIntoConstraints = false
@@ -474,6 +487,10 @@ class SettingsViewController: UIViewController {
     @objc private func dynamicThemeSwitchChanged(_ sender: UISwitch) {
         delegate?.settingsViewController(self, didChangeDynamicThemeState: sender.isOn)
         themeStack.isHidden = sender.isOn
+    }
+    
+    @objc private func reverbSliderSwitchChanged(_ sender: UISwitch) {
+        delegate?.settingsViewController(self, didChangeReverbSliderState: sender.isOn)
     }
 }
 
@@ -840,6 +857,9 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
                 
                 let isDynamicBackgroundEnabled = UserDefaults.standard.bool(forKey: "isDynamicBackgroundEnabled")
                 let isDynamicThemeEnabled = UserDefaults.standard.bool(forKey: "isDynamicThemeEnabled")
+                let isReverbSliderEnabled = UserDefaults.standard.bool(forKey: "isReverbSliderEnabled")
+                
+                settingsViewController(SettingsViewController(), didChangeReverbSliderState: isReverbSliderEnabled)
                 settingsViewController(SettingsViewController(), didChangeDynamicBackgroundState: isDynamicBackgroundEnabled)
                 settingsViewController(SettingsViewController(), didChangeDynamicThemeState: isDynamicThemeEnabled)
                 
@@ -947,6 +967,7 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         settingsVC.isPitchLinked = !pitchSlider.isEnabled // Pass current state
         settingsVC.isDynamicBackgroundEnabled = UserDefaults.standard.bool(forKey: "isDynamicBackgroundEnabled")
         settingsVC.isDynamicThemeEnabled = UserDefaults.standard.bool(forKey: "isDynamicThemeEnabled")
+        settingsVC.isReverbSliderEnabled = UserDefaults.standard.bool(forKey: "isReverbSliderEnabled")
         
         // Present as a sheet
         if let sheet = settingsVC.sheetPresentationController {
@@ -974,6 +995,12 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         // If dynamic theme is enabled, try to apply color from current artwork.
         // Otherwise, apply the saved manual theme.
         applyDynamicTheme(isEnabled: isEnabled, image: albumArtImageView.image)
+    }
+    
+    func settingsViewController(_ controller: SettingsViewController, didChangeReverbSliderState isEnabled: Bool) {
+        UserDefaults.standard.set(isEnabled, forKey: "isReverbSliderEnabled")
+        reverbLabel.isHidden = !isEnabled
+        reverbSlider.isHidden = !isEnabled
     }
     
     private func updateBackground(with image: UIImage?, isDynamicEnabled: Bool? = nil) {
@@ -1227,7 +1254,8 @@ struct AudioEffectsApp: App {
         // This ensures that on the first launch, these features are enabled.
         UserDefaults.standard.register(defaults: [
             "isDynamicBackgroundEnabled": true,
-            "isDynamicThemeEnabled": true
+            "isDynamicThemeEnabled": true,
+            "isReverbSliderEnabled": true
         ])
     }
     var body: some Scene {
