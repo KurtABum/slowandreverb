@@ -357,6 +357,7 @@ protocol SettingsViewControllerDelegate: AnyObject {
     func settingsViewController(_ controller: SettingsViewController, didChangeTapArtworkToChangeSongState isEnabled: Bool)
     func settingsViewController(_ controller: SettingsViewController, didChangePrecisePitchState isEnabled: Bool)
     func settingsViewController(_ controller: SettingsViewController, didChangePreciseSpeedState isEnabled: Bool)
+    func settingsViewController(_ controller: SettingsViewController, didChangeMovingBackgroundState isEnabled: Bool) // New delegate method
 }
 
 /// A simple view controller to display app settings.
@@ -367,6 +368,7 @@ class SettingsViewController: UIViewController {
     var isDynamicThemeEnabled: Bool = false
     var currentTheme: ThemeColor = .blue
     var isReverbSliderEnabled: Bool = true
+    var isMovingBackgroundEnabled: Bool = true // New property
     var isResetSlidersOnTapEnabled: Bool = true
     var isTapArtworkToChangeSongEnabled: Bool = true
     var isPrecisePitchEnabled: Bool = true
@@ -399,6 +401,10 @@ class SettingsViewController: UIViewController {
     private let preciseSpeedSwitch = UISwitch() // New UI element for precise speed
     private let preciseSpeedLabel = UILabel() // New UI element for precise speed
     
+    private let movingBackgroundSwitch = UISwitch() // New UI element
+    private let movingBackgroundLabel = UILabel() // New UI element
+    private var movingBackgroundGroup: UIStackView! // To control visibility
+    
     private var themeStack: UIStackView!
 
     override func viewDidLoad() {
@@ -406,6 +412,9 @@ class SettingsViewController: UIViewController {
         setupUI()
         title = "Settings"
         impactFeedbackGenerator.prepare()
+        
+        // Initial state for moving background group based on dynamic background setting
+        movingBackgroundGroup.isHidden = !isDynamicBackgroundEnabled
         navigationItem.rightBarButtonItem = UIBarButtonItem(barButtonSystemItem: .close, target: self, action: #selector(dismissSettings))
     }
 
@@ -521,6 +530,17 @@ class SettingsViewController: UIViewController {
         preciseSpeedGroup.axis = .vertical
         preciseSpeedGroup.spacing = 4
 
+        // --- Moving Background Setting ---
+        movingBackgroundLabel.text = "Moving Background"
+        movingBackgroundSwitch.isOn = isMovingBackgroundEnabled
+        movingBackgroundSwitch.addTarget(self, action: #selector(movingBackgroundSwitchChanged), for: .valueChanged)
+        let movingBackgroundStack = UIStackView(arrangedSubviews: [movingBackgroundLabel, movingBackgroundSwitch])
+        movingBackgroundStack.spacing = 20
+        let movingBackgroundDescription = createDescriptionLabel(with: "When enabled, the background image will slowly zoom and pan.")
+        movingBackgroundGroup = UIStackView(arrangedSubviews: [movingBackgroundStack, movingBackgroundDescription])
+        movingBackgroundGroup.axis = .vertical
+        movingBackgroundGroup.spacing = 4
+
         // --- Main Settings Stack ---
         let settingsOptionsStack = UIStackView(arrangedSubviews: [
             linkPitchGroup,
@@ -533,6 +553,8 @@ class SettingsViewController: UIViewController {
         settingsOptionsStack.axis = .vertical // Corrected spacing
         settingsOptionsStack.addArrangedSubview(dynamicBackgroundGroup) // Re-added dynamic background
         settingsOptionsStack.insertArrangedSubview(preciseSpeedGroup, at: 4) // Insert precise speed after precise pitch
+        settingsOptionsStack.insertArrangedSubview(preciseSpeedGroup, at: 4) // Insert precise speed after precise pitch (index 4)
+        settingsOptionsStack.insertArrangedSubview(movingBackgroundGroup, at: settingsOptionsStack.arrangedSubviews.firstIndex(of: dynamicBackgroundGroup)! + 1) // Insert moving background after dynamic background
         settingsOptionsStack.spacing = 25
         settingsOptionsStack.translatesAutoresizingMaskIntoConstraints = false
         
@@ -617,6 +639,7 @@ class SettingsViewController: UIViewController {
     @objc private func dynamicBackgroundSwitchChanged(_ sender: UISwitch) {
         delegate?.settingsViewController(self, didChangeDynamicBackgroundState: sender.isOn)
         impactFeedbackGenerator.impactOccurred()
+        movingBackgroundGroup.isHidden = !sender.isOn // Show/hide moving background based on dynamic background
     }
     
     @objc private func dynamicThemeSwitchChanged(_ sender: UISwitch) {
@@ -648,6 +671,11 @@ class SettingsViewController: UIViewController {
     @objc private func preciseSpeedSwitchChanged(_ sender: UISwitch) {
         impactFeedbackGenerator.impactOccurred()
         delegate?.settingsViewController(self, didChangePreciseSpeedState: sender.isOn)
+    }
+    
+    @objc private func movingBackgroundSwitchChanged(_ sender: UISwitch) {
+        delegate?.settingsViewController(self, didChangeMovingBackgroundState: sender.isOn)
+        impactFeedbackGenerator.impactOccurred()
     }
 }
 
@@ -700,6 +728,7 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
     private var isPrecisePitchEnabled = true
     private var isPreciseSpeedEnabled = true // New property for precise speed
     private var lastSnappedPitchValue: Float = 0.0 // To track discrete pitch changes for haptics
+    private var isMovingBackgroundEnabled = true // New property
     private var lastSnappedSpeedValue: Float = 1.0 // To track discrete speed changes for haptics
     
     // MARK: View Lifecycle
@@ -709,6 +738,7 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
     override func viewDidLoad() {
         self.isPreciseSpeedEnabled = UserDefaults.standard.bool(forKey: "isPreciseSpeedEnabled", defaultValue: true) // Load precise speed state
         self.isPrecisePitchEnabled = UserDefaults.standard.bool(forKey: "isPrecisePitchEnabled", defaultValue: true)
+        self.isMovingBackgroundEnabled = UserDefaults.standard.bool(forKey: "isMovingBackgroundEnabled", defaultValue: true) // Load moving background state
         super.viewDidLoad()
         setupUI()
         resetControlsState(isHidden: true)
@@ -727,6 +757,11 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         if !hasLoadedInitialState {
             loadSavedState()
             hasLoadedInitialState = true
+            startBackgroundAnimation()
+            let isDynamicBackgroundEnabled = UserDefaults.standard.bool(forKey: "isDynamicBackgroundEnabled")
+            if isMovingBackgroundEnabled && isDynamicBackgroundEnabled {
+                startBackgroundAnimation()
+            }
         }
     }
 
@@ -749,12 +784,19 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         backgroundImageView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(backgroundImageView)
         
-        // The blur effect view should be added to the background image view's content view
+        // The blur effect view should be a subview of the background image view to fade in together.
         blurEffectView.translatesAutoresizingMaskIntoConstraints = false
-        backgroundImageView.addSubview(blurEffectView)
+        backgroundImageView.addSubview(blurEffectView) // Add blur as a subview
+        NSLayoutConstraint.activate([
+            blurEffectView.topAnchor.constraint(equalTo: backgroundImageView.topAnchor),
+            blurEffectView.bottomAnchor.constraint(equalTo: backgroundImageView.bottomAnchor),
+            blurEffectView.leadingAnchor.constraint(equalTo: backgroundImageView.leadingAnchor),
+            blurEffectView.trailingAnchor.constraint(equalTo: backgroundImageView.trailingAnchor)
+        ])
+        blurEffectView.alpha = 1.0 // Always visible when parent is visible
         
         // Set the default background color
-        backgroundImageView.alpha = 0
+        backgroundImageView.alpha = 0 // Parent view is initially hidden
         updateBackground(with: nil, isDynamicEnabled: UserDefaults.standard.bool(forKey: "isDynamicBackgroundEnabled"))
         
         // The main view background should be clear to see the image behind it
@@ -910,10 +952,6 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
             backgroundImageView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             backgroundImageView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             backgroundImageView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            blurEffectView.topAnchor.constraint(equalTo: backgroundImageView.topAnchor),
-            blurEffectView.bottomAnchor.constraint(equalTo: backgroundImageView.bottomAnchor),
-            blurEffectView.leadingAnchor.constraint(equalTo: backgroundImageView.leadingAnchor),
-            blurEffectView.trailingAnchor.constraint(equalTo: backgroundImageView.trailingAnchor),
             // Settings button in top left
             settingsButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 10),
             settingsButton.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
@@ -950,6 +988,12 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         rewindButton.heightAnchor.constraint(equalToConstant: 50).isActive = true
         skipButton.widthAnchor.constraint(equalToConstant: 50).isActive = true
         skipButton.heightAnchor.constraint(equalToConstant: 50).isActive = true
+    }
+    
+    private func startBackgroundAnimation() {
+        UIView.animate(withDuration: 20, delay: 0, options: [.allowUserInteraction, .autoreverse, .repeat], animations: {
+            self.backgroundImageView.transform = CGAffineTransform(scaleX: 1.8, y: 1.8)
+        })
     }
     
     /// Hides/shows the controls until a file is loaded.
@@ -1155,9 +1199,16 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         
         // Animate the album art based on playback state
         let targetTransform = isPlaying ? .identity : CGAffineTransform(scaleX: 0.85, y: 0.85)
+        let targetTransform: CGAffineTransform
+        if isPlaying {
+            targetTransform = .identity
+        } else {
+            targetTransform = CGAffineTransform(scaleX: 0.85, y: 0.85)
+        }
         
         UIView.animate(withDuration: 0.6,
                        delay: 0,
+                       // Use a spring animation for a more natural feel
                        usingSpringWithDamping: 0.6,
                        initialSpringVelocity: 0.8,
                        options: [.allowUserInteraction, .beginFromCurrentState],
@@ -1184,6 +1235,7 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         settingsVC.isTapArtworkToChangeSongEnabled = UserDefaults.standard.bool(forKey: "isTapArtworkToChangeSongEnabled")
         settingsVC.isPrecisePitchEnabled = self.isPrecisePitchEnabled
         settingsVC.isPreciseSpeedEnabled = self.isPreciseSpeedEnabled // Pass new state
+        settingsVC.isMovingBackgroundEnabled = self.isMovingBackgroundEnabled // Pass new state
         
         // Embed the SettingsViewController in a UINavigationController to display a navigation bar
         let navController = UINavigationController(rootViewController: settingsVC)
@@ -1245,6 +1297,16 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         speedSliderChanged(speedSlider) // Re-evaluate current speed value
     }
     
+    func settingsViewController(_ controller: SettingsViewController, didChangeMovingBackgroundState isEnabled: Bool) {
+        self.isMovingBackgroundEnabled = isEnabled
+        UserDefaults.standard.set(isEnabled, forKey: "isMovingBackgroundEnabled")
+        if isEnabled {
+            startBackgroundAnimation()
+        } else {
+            stopBackgroundAnimation()
+        }
+    }
+    
     private func updateBackground(with image: UIImage?, isDynamicEnabled: Bool? = nil) {
         let useDynamic = isDynamicEnabled ?? UserDefaults.standard.bool(forKey: "isDynamicBackgroundEnabled")
         let shouldShowDynamicBackground = useDynamic && image != nil && image != UIImage(systemName: "music.note") && image != UIImage(systemName: "music.note.list")
@@ -1256,7 +1318,17 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         
         UIView.animate(withDuration: 0.5) {
             let targetAlpha: CGFloat = shouldShowDynamicBackground ? 1.0 : 0.0
+            self.backgroundImageView.alpha = targetAlpha // Only animate the parent view
             self.backgroundImageView.alpha = targetAlpha
+        } completion: { _ in
+            // If dynamic background is disabled, stop the animation
+            if !shouldShowDynamicBackground {
+                self.stopBackgroundAnimation()
+            } else if self.isMovingBackgroundEnabled { // If dynamic background is enabled, and moving background is enabled, start it
+                self.startBackgroundAnimation()
+            } else {
+                self.stopBackgroundAnimation() // If dynamic background is on but moving background is off, ensure it's static
+            }
         }
     }
     
@@ -1316,6 +1388,19 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
 
         return UIColor(red: CGFloat(pixelData[0]) / 255.0, green: CGFloat(pixelData[1]) / 255.0, blue: CGFloat(pixelData[2]) / 255.0, alpha: 1.0)
+    }
+    
+    private func startBackgroundAnimation() {
+        guard isMovingBackgroundEnabled else { return } // Only animate if enabled
+        backgroundImageView.layer.removeAllAnimations() // Ensure it's reset before starting new animation
+        backgroundImageView.transform = .identity
+        UIView.animate(withDuration: 20, delay: 0, options: [.allowUserInteraction, .autoreverse, .repeat], animations: {
+            self.backgroundImageView.transform = CGAffineTransform(scaleX: 1.8, y: 1.8)
+        })
+    }
+    private func stopBackgroundAnimation() {
+        backgroundImageView.layer.removeAllAnimations() // Reset transform to identity and remove all animations
+        backgroundImageView.transform = .identity
     }
     @objc func pitchSliderChanged(_ sender: UISlider) {
         let pitchInCents = sender.value
@@ -1554,6 +1639,8 @@ struct AudioEffectsApp: App {
             "isTapArtworkToChangeSongEnabled": true,
             "isPrecisePitchEnabled": true,
             "isPreciseSpeedEnabled": true // Register new default
+            "isPreciseSpeedEnabled": true,
+            "isMovingBackgroundEnabled": true // Register new default
         ])
     }
     var body: some Scene {
