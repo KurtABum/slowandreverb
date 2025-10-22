@@ -801,6 +801,10 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         reverbSlider.maximumValue = 100.0
         reverbSlider.value = 0.0
         reverbSlider.addTarget(self, action: #selector(reverbSliderChanged), for: .valueChanged)
+        // Initialize reverb slider visibility based on saved settings
+        let isReverbSliderEnabled = UserDefaults.standard.bool(forKey: "isReverbSliderEnabled")
+        reverbLabel.isHidden = !isReverbSliderEnabled
+        reverbSlider.isHidden = !isReverbSliderEnabled
         
         // 6. Reset Button Setup (replaces File Picker button)
         resetButton.setTitle("Reset", for: .normal)
@@ -895,14 +899,15 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         pitchSlider.isHidden = isHidden
         speedLabel.isHidden = isHidden
         speedSlider.isHidden = isHidden
-        reverbLabel.isHidden = isHidden
-        reverbSlider.isHidden = isHidden
+
+        // When controls are being hidden, also hide the artist label.
+        // When controls are shown, its visibility will be determined by `loadAudioFile`.
+        artistNameLabel.isHidden = isHidden
         
         // Reset to initial values
         resetSliders()
         
         playPauseButton.setImage(UIImage(systemName: "play.fill"), for: .normal)
-        artistNameLabel.text = nil
     }
     
     /// Resets only the effect sliders to their default values.
@@ -1319,6 +1324,10 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
             // Reset and show controls
             resetControlsState(isHidden: false)
             resetButton.isHidden = false
+
+            // Re-apply reverb slider visibility based on user settings
+            let isReverbSliderEnabled = UserDefaults.standard.bool(forKey: "isReverbSliderEnabled")
+            settingsViewController(SettingsViewController(), didChangeReverbSliderState: isReverbSliderEnabled)
 
             // Update progress slider and labels for the new song
             let duration = audioProcessor.getAudioDuration()
