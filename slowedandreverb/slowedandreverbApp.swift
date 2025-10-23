@@ -20,6 +20,7 @@ class AudioProcessor {
     private let playerNode = AVAudioPlayerNode()
     private let timePitchNode = AVAudioUnitTimePitch() // Controls playback speed (rate) and pitch
     private let reverbNode = AVAudioUnitReverb()       // Applies environmental effects
+    private let equalizerNode = AVAudioUnitEQ(numberOfBands: 3) // For Bass, Mids, Treble
     private var isPitchCorrectionEnabled = true
     private var needsReschedule = false
     private var isExporting = false // Flag to prevent concurrent exports
@@ -64,13 +65,14 @@ class AudioProcessor {
         setupRemoteTransportControls()
         engine.attach(playerNode)
         engine.attach(timePitchNode)
+        engine.attach(equalizerNode)
         engine.attach(reverbNode)
 
         // The audio format for the connection points must be consistent.
         // We'll derive it from the output of the player node once a file is loaded.
         // For now, we connect with a placeholder format and will reconnect later.
         let commonFormat = engine.mainMixerNode.outputFormat(forBus: 0)
-        
+
         engine.connect(playerNode, to: timePitchNode, format: commonFormat)
         engine.connect(timePitchNode, to: reverbNode, format: commonFormat)
         engine.connect(reverbNode, to: engine.mainMixerNode, format: commonFormat)
@@ -79,6 +81,24 @@ class AudioProcessor {
         reverbNode.loadFactoryPreset(.mediumHall)
         reverbNode.wetDryMix = 0.0 // 0% wet (no reverb initially)
         timePitchNode.rate = 1.0   // Normal speed initially
+        
+        // Initial setup for equalizer bands
+        // Band 0: Bass (Low Shelf)
+        equalizerNode.bands[0].filterType = .lowShelf
+        equalizerNode.bands[0].frequency = 250.0 // Hz
+        equalizerNode.bands[0].gain = 0.0 // dB
+        equalizerNode.bands[0].bypass = false
+        // Band 1: Mids (Parametric)
+        equalizerNode.bands[1].filterType = .parametric
+        equalizerNode.bands[1].frequency = 1000.0 // Hz
+        equalizerNode.bands[1].bandwidth = 1.0 // Octaves
+        equalizerNode.bands[1].gain = 0.0 // dB
+        equalizerNode.bands[1].bypass = false
+        // Band 2: Treble (High Shelf)
+        equalizerNode.bands[2].filterType = .highShelf
+        equalizerNode.bands[2].frequency = 4000.0 // Hz
+        equalizerNode.bands[2].gain = 0.0 // dB
+        equalizerNode.bands[2].bypass = false
 
         do {
             try engine.start()
@@ -105,9 +125,10 @@ class AudioProcessor {
             
             // Reconnect nodes with the audio file's processing format to ensure effects work correctly.
             let fileFormat = file.processingFormat
-            engine.connect(playerNode, to: timePitchNode, format: fileFormat)
-            // The connection to reverb and mainMixerNode should use the file's format.
-            engine.connect(timePitchNode, to: reverbNode, format: fileFormat)
+            // New chain: Player -> Time/Pitch -> EQ -> Reverb -> Output
+            engine.connect(playerNode, to: timePitchNode, format: fileFormat) // Player -> Time/Pitch
+            engine.connect(timePitchNode, to: equalizerNode, format: fileFormat) // Time/Pitch -> EQ
+            engine.connect(equalizerNode, to: reverbNode, format: fileFormat) // EQ -> Reverb
             engine.connect(reverbNode, to: engine.mainMixerNode, format: fileFormat)
             
             // Extract metadata (title and artwork)
@@ -387,6 +408,22 @@ class AudioProcessor {
         reverbNode.wetDryMix = mix
     }
     
+    /// Adjusts the gain of the bass frequencies.
+    /// - Parameter gain: The gain in decibels (-12 to +12).
+    func setBassGain(gain: Float) {
+        equalizerNode.bands[0].gain = gain
+    }
+    /// Adjusts the gain of the mid-range frequencies.
+    /// - Parameter gain: The gain in decibels (-12 to +12).
+    func setMidsGain(gain: Float) {
+        equalizerNode.bands[1].gain = gain
+    }
+    /// Adjusts the gain of the treble frequencies.
+    /// - Parameter gain: The gain in decibels (-12 to +12).
+    func setTrebleGain(gain: Float) {
+        equalizerNode.bands[2].gain = gain
+    }
+    
     // MARK: Audio Export
 
     /// Exports the currently loaded audio file with the applied effects to a temporary file.
@@ -531,6 +568,7 @@ protocol SettingsViewControllerDelegate: AnyObject {
     func settingsViewController(_ controller: SettingsViewController, didChangePrecisePitchState isEnabled: Bool)
     func settingsViewController(_ controller: SettingsViewController, didChangeAccurateSpeedState isEnabled: Bool)
     func settingsViewController(_ controller: SettingsViewController, didChangeShowExportButtonState isEnabled: Bool)
+    func settingsViewController(_ controller: SettingsViewController, didChangeShowEQState isEnabled: Bool)
 }
 
 /// A simple view controller to display app settings.
@@ -547,6 +585,7 @@ class SettingsViewController: UIViewController {
     var isAccuratePitchEnabled: Bool = false
     var isAccurateSpeedEnabled: Bool = false
     var isExportButtonEnabled: Bool = true
+    var isEQEnabled: Bool = false
     private let impactFeedbackGenerator = UIImpactFeedbackGenerator(style: .light)
     
     private let scrollView = UIScrollView()
@@ -580,6 +619,9 @@ class SettingsViewController: UIViewController {
     
     private let exportButtonSwitch = UISwitch()
     private let exportButtonLabel = UILabel()
+    
+    private let eqSwitch = UISwitch()
+    private let eqLabel = UILabel()
     
     private var themeStack: UIStackView!
 
@@ -724,11 +766,23 @@ class SettingsViewController: UIViewController {
         let exportButtonGroup = UIStackView(arrangedSubviews: [exportButtonStack, exportButtonDescription])
         exportButtonGroup.axis = .vertical
         exportButtonGroup.spacing = 4
+        
+        // --- EQ Setting ---
+        eqLabel.text = "Show Equalizer"
+        eqSwitch.isOn = isEQEnabled
+        eqSwitch.addTarget(self, action: #selector(eqSwitchChanged), for: .valueChanged)
+        let eqStack = UIStackView(arrangedSubviews: [eqLabel, eqSwitch])
+        eqStack.spacing = 20
+        let eqDescription = createDescriptionLabel(with: "Shows sliders for Bass, Mids, and Treble control.")
+        let eqGroup = UIStackView(arrangedSubviews: [eqStack, eqDescription])
+        eqGroup.axis = .vertical
+        eqGroup.spacing = 4
 
         // --- Main Settings Stack ---
         let settingsOptionsStack = UIStackView(arrangedSubviews: [
             linkPitchGroup,
             dynamicThemeGroup,
+            eqGroup,
             exportButtonGroup,
             reverbSliderGroup,
             resetSlidersOnTapGroup,
@@ -865,6 +919,11 @@ class SettingsViewController: UIViewController {
         delegate?.settingsViewController(self, didChangeShowExportButtonState: sender.isOn)
         impactFeedbackGenerator.impactOccurred()
     }
+    
+    @objc private func eqSwitchChanged(_ sender: UISwitch) {
+        delegate?.settingsViewController(self, didChangeShowEQState: sender.isOn)
+        impactFeedbackGenerator.impactOccurred()
+    }
 }
 
 // MARK: - 2. User Interface and File Picker
@@ -903,6 +962,16 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
     private let reverbLabel = UILabel()
     private let reverbSlider = UISlider()
     
+    // EQ Components
+    private let bassLabel = UILabel()
+    private let bassSlider = UISlider()
+    
+    private let midsLabel = UILabel()
+    private let midsSlider = UISlider()
+    
+    private let trebleLabel = UILabel()
+    private let trebleSlider = UISlider()
+    
     private let resetButton = UIButton(type: .system)
     private let exportButton = UIButton(type: .system)
     
@@ -929,6 +998,7 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
     override func viewDidLoad() {
         self.isAccurateSpeedEnabled = UserDefaults.standard.bool(forKey: "isAccurateSpeedEnabled")
         self.isAccuratePitchEnabled = UserDefaults.standard.bool(forKey: "isAccuratePitchEnabled")
+        
         super.viewDidLoad()
         overrideUserInterfaceStyle = .dark // Lock the app in dark mode
         setupUI()
@@ -1031,6 +1101,9 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         speedLabel.textAlignment = .center
         pitchLabel.textAlignment = .center
         reverbLabel.textAlignment = .center
+        bassLabel.textAlignment = .center
+        midsLabel.textAlignment = .center
+        trebleLabel.textAlignment = .center
         songTitleLabel.text = "No File Loaded"
 
         // 3. Play/Pause Button
@@ -1102,6 +1175,31 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         reverbLabel.isHidden = !isReverbSliderEnabled
         reverbSlider.isHidden = !isReverbSliderEnabled
         
+        // EQ Sliders Setup (Gain: -12dB to +12dB)
+        bassLabel.text = "Bass (0 dB)"
+        bassSlider.minimumValue = -12
+        bassSlider.maximumValue = 12
+        bassSlider.value = 0
+        bassSlider.addTarget(self, action: #selector(bassSliderChanged), for: .valueChanged)
+        
+        midsLabel.text = "Mids (0 dB)"
+        midsSlider.minimumValue = -12
+        midsSlider.maximumValue = 12
+        midsSlider.value = 0
+        midsSlider.addTarget(self, action: #selector(midsSliderChanged), for: .valueChanged)
+        
+        trebleLabel.text = "Treble (0 dB)"
+        trebleSlider.minimumValue = -12
+        trebleSlider.maximumValue = 12
+        trebleSlider.value = 0
+        trebleSlider.addTarget(self, action: #selector(trebleSliderChanged), for: .valueChanged)
+        
+        // Initialize EQ slider visibility based on saved settings
+        let isEQEnabled = UserDefaults.standard.bool(forKey: "isEQEnabled")
+        [bassLabel, bassSlider, midsLabel, midsSlider, trebleLabel, trebleSlider].forEach {
+            $0.isHidden = !isEQEnabled
+        }
+        
         // 6. Reset Button Setup (replaces File Picker button)
         // Group the effect sliders with their labels for consistent spacing
         let pitchControlStack = UIStackView(arrangedSubviews: [pitchLabel, pitchSlider])
@@ -1113,6 +1211,15 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         let reverbControlStack = UIStackView(arrangedSubviews: [reverbLabel, reverbSlider])
         reverbControlStack.axis = .vertical
         reverbControlStack.spacing = 8
+        let bassControlStack = UIStackView(arrangedSubviews: [bassLabel, bassSlider])
+        bassControlStack.axis = .vertical
+        bassControlStack.spacing = 8
+        let midsControlStack = UIStackView(arrangedSubviews: [midsLabel, midsSlider])
+        midsControlStack.axis = .vertical
+        midsControlStack.spacing = 8
+        let trebleControlStack = UIStackView(arrangedSubviews: [trebleLabel, trebleSlider])
+        trebleControlStack.axis = .vertical
+        trebleControlStack.spacing = 8
         
         var resetButtonConfig = UIButton.Configuration.filled()
         resetButtonConfig.title = "Reset"
@@ -1146,6 +1253,9 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
             pitchControlStack,
             speedControlStack,
             reverbControlStack,
+            bassControlStack,
+            midsControlStack,
+            trebleControlStack,
             UIView(), // Spacer
             actionButtonsStack
         ])
@@ -1156,10 +1266,13 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         stackView.setCustomSpacing(30, after: playbackControlsStack)
         stackView.setCustomSpacing(12, after: pitchControlStack)
         stackView.setCustomSpacing(12, after: speedControlStack)
-        stackView.setCustomSpacing(30, after: reverbControlStack)
+        stackView.setCustomSpacing(12, after: reverbControlStack)
+        stackView.setCustomSpacing(12, after: bassControlStack)
+        stackView.setCustomSpacing(12, after: midsControlStack)
+        stackView.setCustomSpacing(30, after: trebleControlStack)
         
         // The spacer view should have a low-priority constraint to allow it to shrink
-        if let spacer = stackView.arrangedSubviews[4] as? UIView {
+        if let spacer = stackView.arrangedSubviews[7] as? UIView {
             spacer.heightAnchor.constraint(greaterThanOrEqualToConstant: 20).isActive = true
         }
         
@@ -1179,6 +1292,9 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         pitchControlStack.widthAnchor.constraint(equalTo: stackView.widthAnchor).isActive = true
         speedControlStack.widthAnchor.constraint(equalTo: stackView.widthAnchor).isActive = true
         reverbControlStack.widthAnchor.constraint(equalTo: stackView.widthAnchor).isActive = true
+        bassControlStack.widthAnchor.constraint(equalTo: stackView.widthAnchor).isActive = true
+        midsControlStack.widthAnchor.constraint(equalTo: stackView.widthAnchor).isActive = true
+        trebleControlStack.widthAnchor.constraint(equalTo: stackView.widthAnchor).isActive = true
         
         // Bring buttons to the front so they don't get scrolled over
         view.bringSubviewToFront(settingsButton)
@@ -1270,6 +1386,13 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         speedSlider.isHidden = isHidden
         reverbLabel.isHidden = isHidden
         reverbSlider.isHidden = isHidden
+        
+        bassLabel.isHidden = isHidden
+        bassSlider.isHidden = isHidden
+        midsLabel.isHidden = isHidden
+        midsSlider.isHidden = isHidden
+        trebleLabel.isHidden = isHidden
+        trebleSlider.isHidden = isHidden
 
         // When controls are being hidden, also hide the artist label.
         // When controls are shown, its visibility will be determined by `loadAudioFile`.
@@ -1288,11 +1411,17 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         lastSnappedSpeedValue = 1.0 // Reset for haptics
         lastSnappedPitchValue = 0.0 // Reset for haptics
         reverbSlider.value = 0.0
+        bassSlider.value = 0.0
+        midsSlider.value = 0.0
+        trebleSlider.value = 0.0
 
         // Trigger the change handlers to update labels and the audio processor
         speedSliderChanged(speedSlider)
         pitchSliderChanged(pitchSlider)
         reverbSliderChanged(reverbSlider)
+        bassSliderChanged(bassSlider)
+        midsSliderChanged(midsSlider)
+        trebleSliderChanged(trebleSlider)
         impactFeedbackGenerator.impactOccurred() // Add haptic feedback for the global reset button
     }
     
@@ -1314,6 +1443,24 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
     @objc private func resetReverbSlider() {
         reverbSlider.value = 0.0
         reverbSliderChanged(reverbSlider)
+        impactFeedbackGenerator.impactOccurred()
+    }
+    
+    @objc private func resetBassSlider() {
+        bassSlider.value = 0.0
+        bassSliderChanged(bassSlider)
+        impactFeedbackGenerator.impactOccurred()
+    }
+    
+    @objc private func resetMidsSlider() {
+        midsSlider.value = 0.0
+        midsSliderChanged(midsSlider)
+        impactFeedbackGenerator.impactOccurred()
+    }
+    
+    @objc private func resetTrebleSlider() {
+        trebleSlider.value = 0.0
+        trebleSliderChanged(trebleSlider)
         impactFeedbackGenerator.impactOccurred()
     }
 
@@ -1360,6 +1507,7 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
                 let isAccuratePitchEnabled = UserDefaults.standard.bool(forKey: "isAccuratePitchEnabled")
                 let isAccurateSpeedEnabled = UserDefaults.standard.bool(forKey: "isAccurateSpeedEnabled")
                 let isExportButtonEnabled = UserDefaults.standard.bool(forKey: "isExportButtonEnabled", defaultValue: true)
+                let isEQEnabled = UserDefaults.standard.bool(forKey: "isEQEnabled")
                 
                 settingsViewController(SettingsViewController(), didChangeReverbSliderState: isReverbSliderEnabled)
                 settingsViewController(SettingsViewController(), didChangeAnimatedBackgroundState: isAnimatedBackgroundEnabled)
@@ -1370,6 +1518,7 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
                 settingsViewController(SettingsViewController(), didChangePrecisePitchState: isAccuratePitchEnabled)
                 settingsViewController(SettingsViewController(), didChangeAccurateSpeedState: isAccurateSpeedEnabled)
                 settingsViewController(SettingsViewController(), didChangeShowExportButtonState: isExportButtonEnabled)
+                settingsViewController(SettingsViewController(), didChangeShowEQState: isEQEnabled)
                 
                 // Restore slider values after other settings are applied
                 let pitch = UserDefaults.standard.float(forKey: "pitchValue")
@@ -1383,6 +1532,18 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
                 let reverb = UserDefaults.standard.float(forKey: "reverbValue")
                 reverbSlider.value = reverb
                 reverbSliderChanged(reverbSlider)
+                
+                let bass = UserDefaults.standard.float(forKey: "bassValue")
+                bassSlider.value = bass
+                bassSliderChanged(bassSlider)
+                
+                let mids = UserDefaults.standard.float(forKey: "midsValue")
+                midsSlider.value = mids
+                midsSliderChanged(midsSlider)
+                
+                let treble = UserDefaults.standard.float(forKey: "trebleValue")
+                trebleSlider.value = treble
+                trebleSliderChanged(trebleSlider)
 
                 // Load the file but don't auto-play
                 loadAudioFile(url: url, andPlay: false)
@@ -1497,6 +1658,7 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         settingsVC.isAccuratePitchEnabled = self.isAccuratePitchEnabled
         settingsVC.isAccurateSpeedEnabled = self.isAccurateSpeedEnabled
         settingsVC.isExportButtonEnabled = UserDefaults.standard.bool(forKey: "isExportButtonEnabled", defaultValue: true)
+        settingsVC.isEQEnabled = UserDefaults.standard.bool(forKey: "isEQEnabled")
         
         // Embed the SettingsViewController in a UINavigationController to display a navigation bar
         let navController = UINavigationController(rootViewController: settingsVC)
@@ -1566,6 +1728,15 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
     func settingsViewController(_ controller: SettingsViewController, didChangeShowExportButtonState isEnabled: Bool) {
         UserDefaults.standard.set(isEnabled, forKey: "isExportButtonEnabled")
         exportButton.isHidden = !isEnabled
+    }
+    
+    func settingsViewController(_ controller: SettingsViewController, didChangeShowEQState isEnabled: Bool) {
+        UserDefaults.standard.set(isEnabled, forKey: "isEQEnabled")
+        let views = [bassLabel, bassSlider, midsLabel, midsSlider, trebleLabel, trebleSlider]
+        views.forEach { $0.isHidden = !isEnabled }
+        // Re-apply reverb slider visibility based on user settings
+        let isReverbSliderEnabled = UserDefaults.standard.bool(forKey: "isReverbSliderEnabled")
+        settingsViewController(SettingsViewController(), didChangeReverbSliderState: isReverbSliderEnabled)
     }
     
     private func updateBackground(with image: UIImage?, isDynamicEnabled: Bool? = nil) {
@@ -1667,10 +1838,16 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         pitchLabel.gestureRecognizers?.forEach(pitchLabel.removeGestureRecognizer)
         speedLabel.gestureRecognizers?.forEach(speedLabel.removeGestureRecognizer)
         reverbLabel.gestureRecognizers?.forEach(reverbLabel.removeGestureRecognizer)
+        bassLabel.gestureRecognizers?.forEach(bassLabel.removeGestureRecognizer)
+        midsLabel.gestureRecognizers?.forEach(midsLabel.removeGestureRecognizer)
+        trebleLabel.gestureRecognizers?.forEach(trebleLabel.removeGestureRecognizer)
         
         pitchLabel.isUserInteractionEnabled = isEnabled
         speedLabel.isUserInteractionEnabled = isEnabled
         reverbLabel.isUserInteractionEnabled = isEnabled
+        bassLabel.isUserInteractionEnabled = isEnabled
+        midsLabel.isUserInteractionEnabled = isEnabled
+        trebleLabel.isUserInteractionEnabled = isEnabled
         
         if isEnabled {
             let pitchTap = UITapGestureRecognizer(target: self, action: #selector(resetPitchSlider))
@@ -1684,6 +1861,18 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
             let reverbTap = UITapGestureRecognizer(target: self, action: #selector(resetReverbSlider))
             reverbTap.numberOfTapsRequired = 2
             reverbLabel.addGestureRecognizer(reverbTap)
+            
+            let bassTap = UITapGestureRecognizer(target: self, action: #selector(resetBassSlider))
+            bassTap.numberOfTapsRequired = 2
+            bassLabel.addGestureRecognizer(bassTap)
+            
+            let midsTap = UITapGestureRecognizer(target: self, action: #selector(resetMidsSlider))
+            midsTap.numberOfTapsRequired = 2
+            midsLabel.addGestureRecognizer(midsTap)
+            
+            let trebleTap = UITapGestureRecognizer(target: self, action: #selector(resetTrebleSlider))
+            trebleTap.numberOfTapsRequired = 2
+            trebleLabel.addGestureRecognizer(trebleTap)
         }
     }
     
@@ -1722,6 +1911,27 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         audioProcessor.setReverbMix(mix: mix)
         UserDefaults.standard.set(mix, forKey: "reverbValue")
         reverbLabel.text = String(format: "Reverb (%d%%)", Int(mix.rounded()))
+    }
+    
+    @objc func bassSliderChanged(_ sender: UISlider) {
+        let gain = sender.value
+        audioProcessor.setBassGain(gain: gain)
+        UserDefaults.standard.set(gain, forKey: "bassValue")
+        bassLabel.text = String(format: "Bass (%.1f dB)", gain)
+    }
+    
+    @objc func midsSliderChanged(_ sender: UISlider) {
+        let gain = sender.value
+        audioProcessor.setMidsGain(gain: gain)
+        UserDefaults.standard.set(gain, forKey: "midsValue")
+        midsLabel.text = String(format: "Mids (%.1f dB)", gain)
+    }
+    
+    @objc func trebleSliderChanged(_ sender: UISlider) {
+        let gain = sender.value
+        audioProcessor.setTrebleGain(gain: gain)
+        UserDefaults.standard.set(gain, forKey: "trebleValue")
+        trebleLabel.text = String(format: "Treble (%.1f dB)", gain)
     }
 
     // MARK: File Picker Logic
@@ -1792,6 +2002,10 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
             // Re-apply reverb slider visibility based on user settings
             let isReverbSliderEnabled = UserDefaults.standard.bool(forKey: "isReverbSliderEnabled")
             settingsViewController(SettingsViewController(), didChangeReverbSliderState: isReverbSliderEnabled)
+            
+            // Re-apply EQ slider visibility based on user settings
+            let isEQEnabled = UserDefaults.standard.bool(forKey: "isEQEnabled")
+            settingsViewController(SettingsViewController(), didChangeShowEQState: isEQEnabled)
 
             // Update progress slider and labels for the new song
             let duration = audioProcessor.getAudioDuration()
@@ -1924,7 +2138,8 @@ struct AudioEffectsApp: App {
             "isTapArtworkToChangeSongEnabled": true,
             "isAccuratePitchEnabled": false,
             "isAccurateSpeedEnabled": false,
-            "isExportButtonEnabled": true
+            "isExportButtonEnabled": true,
+            "isEQEnabled": false // Default EQ to off
         ])
     }
     var body: some Scene {
