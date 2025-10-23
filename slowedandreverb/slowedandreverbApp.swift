@@ -433,7 +433,7 @@ protocol SettingsViewControllerDelegate: AnyObject {
     func settingsViewController(_ controller: SettingsViewController, didChangeResetSlidersOnTapState isEnabled: Bool)
     func settingsViewController(_ controller: SettingsViewController, didChangeTapArtworkToChangeSongState isEnabled: Bool)
     func settingsViewController(_ controller: SettingsViewController, didChangePrecisePitchState isEnabled: Bool)
-    func settingsViewController(_ controller: SettingsViewController, didChangePreciseSpeedState isEnabled: Bool)
+    func settingsViewController(_ controller: SettingsViewController, didChangeAccurateSpeedState isEnabled: Bool)
 }
 
 /// A simple view controller to display app settings.
@@ -447,8 +447,8 @@ class SettingsViewController: UIViewController {
     var isReverbSliderEnabled: Bool = true
     var isResetSlidersOnTapEnabled: Bool = true
     var isTapArtworkToChangeSongEnabled: Bool = true
-    var isPrecisePitchEnabled: Bool = true
-    var isPreciseSpeedEnabled: Bool = true // New property for precise speed
+    var isAccuratePitchEnabled: Bool = false
+    var isAccurateSpeedEnabled: Bool = false
     private let impactFeedbackGenerator = UIImpactFeedbackGenerator(style: .light)
     
     private let scrollView = UIScrollView()
@@ -474,11 +474,11 @@ class SettingsViewController: UIViewController {
     private let tapArtworkSwitch = UISwitch()
     private let tapArtworkLabel = UILabel()
     
-    private let precisePitchSwitch = UISwitch()
-    private let precisePitchLabel = UILabel()
+    private let accuratePitchSwitch = UISwitch()
+    private let accuratePitchLabel = UILabel()
     
-    private let preciseSpeedSwitch = UISwitch() // New UI element for precise speed
-    private let preciseSpeedLabel = UILabel() // New UI element for precise speed
+    private let accurateSpeedSwitch = UISwitch()
+    private let accurateSpeedLabel = UILabel()
     
     private var themeStack: UIStackView!
 
@@ -591,25 +591,25 @@ class SettingsViewController: UIViewController {
         tapArtworkGroup.axis = .vertical
         tapArtworkGroup.spacing = 4
         
-        // --- Precise Pitch Setting ---
-        precisePitchLabel.text = "Precise Pitch"
-        precisePitchSwitch.isOn = isPrecisePitchEnabled
-        precisePitchSwitch.addTarget(self, action: #selector(precisePitchSwitchChanged), for: .valueChanged)
-        let precisePitchStack = UIStackView(arrangedSubviews: [precisePitchLabel, precisePitchSwitch])
-        precisePitchStack.spacing = 20
-        let precisePitchDescription = createDescriptionLabel(with: "When disabled, the pitch slider will snap to whole semitones.")
-        let precisePitchGroup = UIStackView(arrangedSubviews: [precisePitchStack, precisePitchDescription])
-        precisePitchGroup.axis = .vertical
-        precisePitchGroup.spacing = 4 // Corrected spacing
+        // --- Accurate Pitch Setting ---
+        accuratePitchLabel.text = "Accurate Pitch"
+        accuratePitchSwitch.isOn = isAccuratePitchEnabled
+        accuratePitchSwitch.addTarget(self, action: #selector(accuratePitchSwitchChanged), for: .valueChanged)
+        let accuratePitchStack = UIStackView(arrangedSubviews: [accuratePitchLabel, accuratePitchSwitch])
+        accuratePitchStack.spacing = 20
+        let accuratePitchDescription = createDescriptionLabel(with: "When enabled, the pitch slider will snap to whole semitones.")
+        let accuratePitchGroup = UIStackView(arrangedSubviews: [accuratePitchStack, accuratePitchDescription])
+        accuratePitchGroup.axis = .vertical
+        accuratePitchGroup.spacing = 4
         
-        // --- Precise Speed Setting ---
-        preciseSpeedLabel.text = "Precise Speed"
-        preciseSpeedSwitch.isOn = isPreciseSpeedEnabled
-        preciseSpeedSwitch.addTarget(self, action: #selector(preciseSpeedSwitchChanged), for: .valueChanged)
-        let preciseSpeedStack = UIStackView(arrangedSubviews: [preciseSpeedLabel, preciseSpeedSwitch])
-        preciseSpeedStack.spacing = 20
-        let preciseSpeedDescription = createDescriptionLabel(with: "When disabled, the speed slider will snap to 0.05x increments.")
-        let preciseSpeedGroup = UIStackView(arrangedSubviews: [preciseSpeedStack, preciseSpeedDescription])
+        // --- Accurate Speed Setting ---
+        accurateSpeedLabel.text = "Accurate Speed"
+        accurateSpeedSwitch.isOn = isAccurateSpeedEnabled
+        accurateSpeedSwitch.addTarget(self, action: #selector(accurateSpeedSwitchChanged), for: .valueChanged)
+        let accurateSpeedStack = UIStackView(arrangedSubviews: [accurateSpeedLabel, accurateSpeedSwitch])
+        accurateSpeedStack.spacing = 20
+        let accurateSpeedDescription = createDescriptionLabel(with: "When enabled, the speed slider will snap to 0.05x increments.")
+        let preciseSpeedGroup = UIStackView(arrangedSubviews: [accurateSpeedStack, accurateSpeedDescription])
         preciseSpeedGroup.axis = .vertical
         preciseSpeedGroup.spacing = 4
 
@@ -617,7 +617,7 @@ class SettingsViewController: UIViewController {
         let settingsOptionsStack = UIStackView(arrangedSubviews: [
             linkPitchGroup,
             dynamicThemeGroup,
-            precisePitchGroup,
+            accuratePitchGroup,
             reverbSliderGroup,
             resetSlidersOnTapGroup,
             tapArtworkGroup
@@ -738,14 +738,14 @@ class SettingsViewController: UIViewController {
         impactFeedbackGenerator.impactOccurred()
     }
     
-    @objc private func precisePitchSwitchChanged(_ sender: UISwitch) {
+    @objc private func accuratePitchSwitchChanged(_ sender: UISwitch) {
         impactFeedbackGenerator.impactOccurred()
         delegate?.settingsViewController(self, didChangePrecisePitchState: sender.isOn)
     }
     
-    @objc private func preciseSpeedSwitchChanged(_ sender: UISwitch) {
+    @objc private func accurateSpeedSwitchChanged(_ sender: UISwitch) {
         impactFeedbackGenerator.impactOccurred()
-        delegate?.settingsViewController(self, didChangePreciseSpeedState: sender.isOn)
+        delegate?.settingsViewController(self, didChangeAccurateSpeedState: sender.isOn)
     }
 }
 
@@ -795,8 +795,8 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
     private let albumArtTapGesture = UITapGestureRecognizer()
     
     // Settings state
-    private var isPrecisePitchEnabled = true
-    private var isPreciseSpeedEnabled = true // New property for precise speed
+    private var isAccuratePitchEnabled = false
+    private var isAccurateSpeedEnabled = false
     private var lastSnappedPitchValue: Float = 0.0 // To track discrete pitch changes for haptics
     private var lastSnappedSpeedValue: Float = 1.0 // To track discrete speed changes for haptics
     
@@ -805,8 +805,8 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
     private var hasLoadedInitialState = false
 
     override func viewDidLoad() {
-        self.isPreciseSpeedEnabled = UserDefaults.standard.bool(forKey: "isPreciseSpeedEnabled", defaultValue: true) // Load precise speed state
-        self.isPrecisePitchEnabled = UserDefaults.standard.bool(forKey: "isPrecisePitchEnabled", defaultValue: true)
+        self.isAccurateSpeedEnabled = UserDefaults.standard.bool(forKey: "isAccurateSpeedEnabled")
+        self.isAccuratePitchEnabled = UserDefaults.standard.bool(forKey: "isAccuratePitchEnabled")
         super.viewDidLoad()
         overrideUserInterfaceStyle = .dark // Lock the app in dark mode
         setupUI()
@@ -1174,8 +1174,8 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
                 let isReverbSliderEnabled = UserDefaults.standard.bool(forKey: "isReverbSliderEnabled")
                 let isResetSlidersOnTapEnabled = UserDefaults.standard.bool(forKey: "isResetSlidersOnTapEnabled")
                 let isTapArtworkToChangeSongEnabled = UserDefaults.standard.bool(forKey: "isTapArtworkToChangeSongEnabled")
-                let isPrecisePitchEnabled = UserDefaults.standard.bool(forKey: "isPrecisePitchEnabled", defaultValue: true)
-                let isPreciseSpeedEnabled = UserDefaults.standard.bool(forKey: "isPreciseSpeedEnabled", defaultValue: true) // Load new state
+                let isAccuratePitchEnabled = UserDefaults.standard.bool(forKey: "isAccuratePitchEnabled")
+                let isAccurateSpeedEnabled = UserDefaults.standard.bool(forKey: "isAccurateSpeedEnabled")
                 
                 settingsViewController(SettingsViewController(), didChangeReverbSliderState: isReverbSliderEnabled)
                 settingsViewController(SettingsViewController(), didChangeAnimatedBackgroundState: isAnimatedBackgroundEnabled)
@@ -1183,8 +1183,8 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
                 settingsViewController(SettingsViewController(), didChangeDynamicThemeState: isDynamicThemeEnabled)
                 settingsViewController(SettingsViewController(), didChangeResetSlidersOnTapState: isResetSlidersOnTapEnabled)
                 settingsViewController(SettingsViewController(), didChangeTapArtworkToChangeSongState: isTapArtworkToChangeSongEnabled)
-                settingsViewController(SettingsViewController(), didChangePrecisePitchState: isPrecisePitchEnabled)
-                settingsViewController(SettingsViewController(), didChangePreciseSpeedState: isPreciseSpeedEnabled) // Apply new state
+                settingsViewController(SettingsViewController(), didChangePrecisePitchState: isAccuratePitchEnabled)
+                settingsViewController(SettingsViewController(), didChangeAccurateSpeedState: isAccurateSpeedEnabled)
                 
                 // Restore slider values after other settings are applied
                 let pitch = UserDefaults.standard.float(forKey: "pitchValue")
@@ -1309,8 +1309,8 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         settingsVC.isReverbSliderEnabled = UserDefaults.standard.bool(forKey: "isReverbSliderEnabled")
         settingsVC.isResetSlidersOnTapEnabled = UserDefaults.standard.bool(forKey: "isResetSlidersOnTapEnabled")
         settingsVC.isTapArtworkToChangeSongEnabled = UserDefaults.standard.bool(forKey: "isTapArtworkToChangeSongEnabled")
-        settingsVC.isPrecisePitchEnabled = self.isPrecisePitchEnabled
-        settingsVC.isPreciseSpeedEnabled = self.isPreciseSpeedEnabled // Pass new state
+        settingsVC.isAccuratePitchEnabled = self.isAccuratePitchEnabled
+        settingsVC.isAccurateSpeedEnabled = self.isAccurateSpeedEnabled
         
         // Embed the SettingsViewController in a UINavigationController to display a navigation bar
         let navController = UINavigationController(rootViewController: settingsVC)
@@ -1366,14 +1366,14 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
     }
     
     func settingsViewController(_ controller: SettingsViewController, didChangePrecisePitchState isEnabled: Bool) {
-        self.isPrecisePitchEnabled = isEnabled
-        UserDefaults.standard.set(isEnabled, forKey: "isPrecisePitchEnabled")
+        self.isAccuratePitchEnabled = isEnabled
+        UserDefaults.standard.set(isEnabled, forKey: "isAccuratePitchEnabled")
         pitchSliderChanged(pitchSlider) // Re-evaluate current pitch value
     }
     
-    func settingsViewController(_ controller: SettingsViewController, didChangePreciseSpeedState isEnabled: Bool) {
-        self.isPreciseSpeedEnabled = isEnabled
-        UserDefaults.standard.set(isEnabled, forKey: "isPreciseSpeedEnabled")
+    func settingsViewController(_ controller: SettingsViewController, didChangeAccurateSpeedState isEnabled: Bool) {
+        self.isAccurateSpeedEnabled = isEnabled
+        UserDefaults.standard.set(isEnabled, forKey: "isAccurateSpeedEnabled")
         speedSliderChanged(speedSlider) // Re-evaluate current speed value
     }
     
@@ -1454,7 +1454,7 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         
         var finalPitch = pitchInCents
         
-        if !isPrecisePitchEnabled {
+        if isAccuratePitchEnabled {
             let roundedPitch = (pitchInCents / 100.0).rounded() * 100.0
             
             if roundedPitch != lastSnappedPitchValue {
@@ -1501,7 +1501,7 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         UserDefaults.standard.set(rawRate, forKey: "speedValue")
 
         var finalRate = rawRate
-        if !isPreciseSpeedEnabled {
+        if isAccurateSpeedEnabled {
             // Snap to 0.05 increments (e.g., 0.50, 0.55, 0.60...)
             let roundedRate = (rawRate * 20).rounded() / 20
             
@@ -1685,8 +1685,8 @@ struct AudioEffectsApp: App {
             "isReverbSliderEnabled": true,
             "isResetSlidersOnTapEnabled": true,
             "isTapArtworkToChangeSongEnabled": true,
-            "isPrecisePitchEnabled": true,
-            "isPreciseSpeedEnabled": true // Register new default
+            "isAccuratePitchEnabled": false,
+            "isAccurateSpeedEnabled": false
         ])
     }
     var body: some Scene {
