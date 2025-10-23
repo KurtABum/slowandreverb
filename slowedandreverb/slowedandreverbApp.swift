@@ -567,6 +567,7 @@ protocol SettingsViewControllerDelegate: AnyObject {
     func settingsViewController(_ controller: SettingsViewController, didChangeTapArtworkToChangeSongState isEnabled: Bool)
     func settingsViewController(_ controller: SettingsViewController, didChangePrecisePitchState isEnabled: Bool)
     func settingsViewController(_ controller: SettingsViewController, didChangeAccurateSpeedState isEnabled: Bool)
+    func settingsViewController(_ controller: SettingsViewController, didChangeShowAlbumArtState isEnabled: Bool)
     func settingsViewController(_ controller: SettingsViewController, didChangeShowExportButtonState isEnabled: Bool)
     func settingsViewController(_ controller: SettingsViewController, didChangeShowEQState isEnabled: Bool)
 }
@@ -586,6 +587,7 @@ class SettingsViewController: UIViewController {
     var isAccurateSpeedEnabled: Bool = false
     var isExportButtonEnabled: Bool = true
     var isEQEnabled: Bool = false
+    var isAlbumArtVisible: Bool = true
     private let impactFeedbackGenerator = UIImpactFeedbackGenerator(style: .light)
     
     private let scrollView = UIScrollView()
@@ -622,6 +624,9 @@ class SettingsViewController: UIViewController {
     
     private let eqSwitch = UISwitch()
     private let eqLabel = UILabel()
+
+    private let albumArtSwitch = UISwitch()
+    private let albumArtLabel = UILabel()
     
     private var themeStack: UIStackView!
 
@@ -638,6 +643,7 @@ class SettingsViewController: UIViewController {
         
         // Add scroll view to the main view
         scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.showsVerticalScrollIndicator = false
         view.addSubview(scrollView)
         
         NSLayoutConstraint.activate([
@@ -777,6 +783,17 @@ class SettingsViewController: UIViewController {
         let eqGroup = UIStackView(arrangedSubviews: [eqStack, eqDescription])
         eqGroup.axis = .vertical
         eqGroup.spacing = 4
+        
+        // --- Show Album Art Setting ---
+        albumArtLabel.text = "Show Album Art"
+        albumArtSwitch.isOn = isAlbumArtVisible
+        albumArtSwitch.addTarget(self, action: #selector(albumArtSwitchChanged), for: .valueChanged)
+        let albumArtStack = UIStackView(arrangedSubviews: [albumArtLabel, albumArtSwitch])
+        albumArtStack.spacing = 20
+        let albumArtDescription = createDescriptionLabel(with: "Shows or hides the album artwork on the main screen. The dynamic background is not affected.")
+        let albumArtGroup = UIStackView(arrangedSubviews: [albumArtStack, albumArtDescription])
+        albumArtGroup.axis = .vertical
+        albumArtGroup.spacing = 4
 
         // --- Main Settings Stack ---
         let settingsOptionsStack = UIStackView(arrangedSubviews: [
@@ -785,7 +802,8 @@ class SettingsViewController: UIViewController {
             eqGroup,
             exportButtonGroup,
             reverbSliderGroup,
-            resetSlidersOnTapGroup,
+            resetSlidersOnTapGroup, // Corrected spacing
+            albumArtGroup,
             tapArtworkGroup
         ])
         settingsOptionsStack.axis = .vertical // Corrected spacing
@@ -922,6 +940,11 @@ class SettingsViewController: UIViewController {
     
     @objc private func eqSwitchChanged(_ sender: UISwitch) {
         delegate?.settingsViewController(self, didChangeShowEQState: sender.isOn)
+        impactFeedbackGenerator.impactOccurred()
+    }
+    
+    @objc private func albumArtSwitchChanged(_ sender: UISwitch) {
+        delegate?.settingsViewController(self, didChangeShowAlbumArtState: sender.isOn)
         impactFeedbackGenerator.impactOccurred()
     }
 }
@@ -1285,6 +1308,7 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         
         // Setup ScrollView
         scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.showsVerticalScrollIndicator = false
         view.addSubview(scrollView)
         scrollView.addSubview(stackView)
         
@@ -1508,6 +1532,7 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
                 let isAccurateSpeedEnabled = UserDefaults.standard.bool(forKey: "isAccurateSpeedEnabled")
                 let isExportButtonEnabled = UserDefaults.standard.bool(forKey: "isExportButtonEnabled", defaultValue: true)
                 let isEQEnabled = UserDefaults.standard.bool(forKey: "isEQEnabled")
+                let isAlbumArtVisible = UserDefaults.standard.bool(forKey: "isAlbumArtVisible", defaultValue: true)
                 
                 settingsViewController(SettingsViewController(), didChangeReverbSliderState: isReverbSliderEnabled)
                 settingsViewController(SettingsViewController(), didChangeAnimatedBackgroundState: isAnimatedBackgroundEnabled)
@@ -1519,6 +1544,7 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
                 settingsViewController(SettingsViewController(), didChangeAccurateSpeedState: isAccurateSpeedEnabled)
                 settingsViewController(SettingsViewController(), didChangeShowExportButtonState: isExportButtonEnabled)
                 settingsViewController(SettingsViewController(), didChangeShowEQState: isEQEnabled)
+                settingsViewController(SettingsViewController(), didChangeShowAlbumArtState: isAlbumArtVisible)
                 
                 // Restore slider values after other settings are applied
                 let pitch = UserDefaults.standard.float(forKey: "pitchValue")
@@ -1659,6 +1685,7 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         settingsVC.isAccurateSpeedEnabled = self.isAccurateSpeedEnabled
         settingsVC.isExportButtonEnabled = UserDefaults.standard.bool(forKey: "isExportButtonEnabled", defaultValue: true)
         settingsVC.isEQEnabled = UserDefaults.standard.bool(forKey: "isEQEnabled")
+        settingsVC.isAlbumArtVisible = UserDefaults.standard.bool(forKey: "isAlbumArtVisible", defaultValue: true)
         
         // Embed the SettingsViewController in a UINavigationController to display a navigation bar
         let navController = UINavigationController(rootViewController: settingsVC)
@@ -1735,6 +1762,11 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         let views = [bassLabel, bassSlider, midsLabel, midsSlider, trebleLabel, trebleSlider]
         views.forEach { $0.isHidden = !isEnabled }
         // Re-apply reverb slider visibility based on user settings
+    }
+    
+    func settingsViewController(_ controller: SettingsViewController, didChangeShowAlbumArtState isEnabled: Bool) {
+        UserDefaults.standard.set(isEnabled, forKey: "isAlbumArtVisible")
+        albumArtImageView.isHidden = !isEnabled
         let isReverbSliderEnabled = UserDefaults.standard.bool(forKey: "isReverbSliderEnabled")
         settingsViewController(SettingsViewController(), didChangeReverbSliderState: isReverbSliderEnabled)
     }
@@ -2139,7 +2171,8 @@ struct AudioEffectsApp: App {
             "isAccuratePitchEnabled": false,
             "isAccurateSpeedEnabled": false,
             "isExportButtonEnabled": true,
-            "isEQEnabled": false // Default EQ to off
+            "isEQEnabled": false, // Default EQ to off
+            "isAlbumArtVisible": true
         ])
     }
     var body: some Scene {
