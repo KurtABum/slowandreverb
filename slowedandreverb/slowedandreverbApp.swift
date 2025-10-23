@@ -6,6 +6,12 @@ import SwiftUI // Added for Canvas Preview support
 
 // MARK: - 1. Audio Engine Logic
 
+/// Custom errors for the audio export process.
+enum ExportError: Error, LocalizedError {
+    case noAudioFileLoaded
+    case exportInProgress
+}
+
 /// Manages the AVAudioEngine and applies real-time audio effects (Tempo and Reverb).
 class AudioProcessor {
     // MARK: Audio Graph Components
@@ -16,6 +22,7 @@ class AudioProcessor {
     private let reverbNode = AVAudioUnitReverb()       // Applies environmental effects
     private var isPitchCorrectionEnabled = true
     private var needsReschedule = false
+    private var isExporting = false // Flag to prevent concurrent exports
     
     private var audioFile: AVAudioFile?
     private var isPlaying = false
@@ -379,6 +386,95 @@ class AudioProcessor {
     func setReverbMix(mix: Float) {
         reverbNode.wetDryMix = mix
     }
+    
+    // MARK: Audio Export
+
+    /// Exports the currently loaded audio file with the applied effects to a temporary file.
+    /// - Parameters:
+    ///   - completion: A closure called when the export is complete, returning the URL of the exported file or an error.
+    func exportAudio(completion: @escaping (Result<URL, Error>) -> Void) {
+        guard let sourceFile = self.audioFile else {
+            completion(.failure(ExportError.noAudioFileLoaded))
+            return
+        }
+        
+        if isExporting {
+            completion(.failure(ExportError.exportInProgress))
+            return
+        }
+        
+        isExporting = true
+        
+        // Stop playback to avoid issues with the engine state
+        let wasPlaying = playerNode.isPlaying
+        if wasPlaying {
+            playerNode.pause()
+        }
+
+        do {
+            let maxFrames: AVAudioFrameCount = 4096
+            try engine.enableManualRenderingMode(.offline, format: sourceFile.processingFormat, maximumFrameCount: maxFrames)
+            
+            // Create a temporary file URL for the output
+            // Saving as an uncompressed .caf file is more robust than encoding to .m4a.
+            let outputURL = FileManager.default.temporaryDirectory.appendingPathComponent("exported-\(UUID().uuidString).caf")
+            
+            // Create the output file using the engine's uncompressed rendering format.
+            // This avoids any potential encoding errors.
+            let outputFile = try AVAudioFile(forWriting: outputURL, settings: engine.manualRenderingFormat.settings)
+            
+            // Schedule the entire source file for rendering
+            playerNode.scheduleFile(sourceFile, at: nil, completionHandler: nil)
+            
+            // Start the engine and player for rendering
+            try engine.start()
+            playerNode.play()
+            
+            // The buffer to pull rendered audio into
+            guard let buffer = AVAudioPCMBuffer(pcmFormat: engine.manualRenderingFormat, frameCapacity: engine.manualRenderingMaximumFrameCount) else {
+                isExporting = false
+                return
+            }
+
+            while engine.manualRenderingSampleTime < sourceFile.length {
+                let framesToRender = min(buffer.frameCapacity, AVAudioFrameCount(sourceFile.length - engine.manualRenderingSampleTime))
+                let status = try engine.renderOffline(framesToRender, to: buffer)
+                
+                switch status {
+                case .success:
+                    try outputFile.write(from: buffer)
+                case .cannotDoInCurrentContext:
+                    continue // Try again
+                case .error:
+                    throw NSError(domain: "AVAudioEngine", code: 1, userInfo: [NSLocalizedDescriptionKey: "Offline rendering error."])
+                @unknown default:
+                    break
+                }
+            }
+            
+            // Clean up
+            playerNode.stop()
+            engine.stop()
+            engine.disableManualRenderingMode()
+            
+            // Reschedule the original file for normal playback
+            playerNode.scheduleFile(sourceFile, at: nil) { [weak self] in
+                self?.needsReschedule = true
+            }
+            if wasPlaying {
+                playerNode.play()
+            }
+            
+            isExporting = false
+            completion(.success(outputURL))
+            
+        } catch {
+            // Ensure we clean up on error
+            isExporting = false
+            engine.disableManualRenderingMode()
+            completion(.failure(error))
+        }
+    }
 }
 
 // MARK: - Theme Management
@@ -434,6 +530,7 @@ protocol SettingsViewControllerDelegate: AnyObject {
     func settingsViewController(_ controller: SettingsViewController, didChangeTapArtworkToChangeSongState isEnabled: Bool)
     func settingsViewController(_ controller: SettingsViewController, didChangePrecisePitchState isEnabled: Bool)
     func settingsViewController(_ controller: SettingsViewController, didChangeAccurateSpeedState isEnabled: Bool)
+    func settingsViewController(_ controller: SettingsViewController, didChangeShowExportButtonState isEnabled: Bool)
 }
 
 /// A simple view controller to display app settings.
@@ -449,6 +546,7 @@ class SettingsViewController: UIViewController {
     var isTapArtworkToChangeSongEnabled: Bool = true
     var isAccuratePitchEnabled: Bool = false
     var isAccurateSpeedEnabled: Bool = false
+    var isExportButtonEnabled: Bool = true
     private let impactFeedbackGenerator = UIImpactFeedbackGenerator(style: .light)
     
     private let scrollView = UIScrollView()
@@ -479,6 +577,9 @@ class SettingsViewController: UIViewController {
     
     private let accurateSpeedSwitch = UISwitch()
     private let accurateSpeedLabel = UILabel()
+    
+    private let exportButtonSwitch = UISwitch()
+    private let exportButtonLabel = UILabel()
     
     private var themeStack: UIStackView!
 
@@ -612,12 +713,23 @@ class SettingsViewController: UIViewController {
         let preciseSpeedGroup = UIStackView(arrangedSubviews: [accurateSpeedStack, accurateSpeedDescription])
         preciseSpeedGroup.axis = .vertical
         preciseSpeedGroup.spacing = 4
+        
+        // --- Export Button Setting ---
+        exportButtonLabel.text = "Show Export Button"
+        exportButtonSwitch.isOn = isExportButtonEnabled
+        exportButtonSwitch.addTarget(self, action: #selector(exportButtonSwitchChanged), for: .valueChanged)
+        let exportButtonStack = UIStackView(arrangedSubviews: [exportButtonLabel, exportButtonSwitch])
+        exportButtonStack.spacing = 20
+        let exportButtonDescription = createDescriptionLabel(with: "Shows a button to export the audio with all effects applied.")
+        let exportButtonGroup = UIStackView(arrangedSubviews: [exportButtonStack, exportButtonDescription])
+        exportButtonGroup.axis = .vertical
+        exportButtonGroup.spacing = 4
 
         // --- Main Settings Stack ---
         let settingsOptionsStack = UIStackView(arrangedSubviews: [
             linkPitchGroup,
             dynamicThemeGroup,
-            accuratePitchGroup,
+            exportButtonGroup,
             reverbSliderGroup,
             resetSlidersOnTapGroup,
             tapArtworkGroup
@@ -626,6 +738,7 @@ class SettingsViewController: UIViewController {
         settingsOptionsStack.addArrangedSubview(dynamicBackgroundGroup) // Re-added dynamic background
         settingsOptionsStack.addArrangedSubview(animatedBackgroundGroup)
         settingsOptionsStack.insertArrangedSubview(preciseSpeedGroup, at: 4) // Insert precise speed after precise pitch
+        settingsOptionsStack.insertArrangedSubview(accuratePitchGroup, at: 2)
         settingsOptionsStack.spacing = 25
         settingsOptionsStack.translatesAutoresizingMaskIntoConstraints = false
         
@@ -747,6 +860,11 @@ class SettingsViewController: UIViewController {
         impactFeedbackGenerator.impactOccurred()
         delegate?.settingsViewController(self, didChangeAccurateSpeedState: sender.isOn)
     }
+    
+    @objc private func exportButtonSwitchChanged(_ sender: UISwitch) {
+        delegate?.settingsViewController(self, didChangeShowExportButtonState: sender.isOn)
+        impactFeedbackGenerator.impactOccurred()
+    }
 }
 
 // MARK: - 2. User Interface and File Picker
@@ -786,10 +904,14 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
     private let reverbSlider = UISlider()
     
     private let resetButton = UIButton(type: .system)
+    private let exportButton = UIButton(type: .system)
     
     // New buttons for rewind and skip
     private let rewindButton = UIButton(type: .system)
     private let skipButton = UIButton(type: .system)
+    
+    // Scroll View for main content
+    private let scrollView = UIScrollView()
     
     // Gesture Recognizers
     private let albumArtTapGesture = UITapGestureRecognizer()
@@ -981,9 +1103,39 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         reverbSlider.isHidden = !isReverbSliderEnabled
         
         // 6. Reset Button Setup (replaces File Picker button)
-        resetButton.setTitle("Reset", for: .normal)
-        resetButton.titleLabel?.font = .systemFont(ofSize: 17)
+        // Group the effect sliders with their labels for consistent spacing
+        let pitchControlStack = UIStackView(arrangedSubviews: [pitchLabel, pitchSlider])
+        pitchControlStack.axis = .vertical
+        pitchControlStack.spacing = 8
+        let speedControlStack = UIStackView(arrangedSubviews: [speedLabel, speedSlider])
+        speedControlStack.axis = .vertical
+        speedControlStack.spacing = 8
+        let reverbControlStack = UIStackView(arrangedSubviews: [reverbLabel, reverbSlider])
+        reverbControlStack.axis = .vertical
+        reverbControlStack.spacing = 8
+        
+        var resetButtonConfig = UIButton.Configuration.filled()
+        resetButtonConfig.title = "Reset"
+        resetButtonConfig.baseBackgroundColor = .secondarySystemFill
+        resetButtonConfig.baseForegroundColor = .label
+        resetButtonConfig.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 20, bottom: 12, trailing: 20)
+        resetButton.configuration = resetButtonConfig
         resetButton.addTarget(self, action: #selector(resetSliders), for: .touchUpInside)
+
+        // Export Button Setup
+        var exportButtonConfig = UIButton.Configuration.filled()
+        exportButtonConfig.title = "Export"
+        exportButtonConfig.baseBackgroundColor = .secondarySystemFill
+        exportButtonConfig.baseForegroundColor = .label
+        exportButtonConfig.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 20, bottom: 12, trailing: 20)
+        exportButton.configuration = exportButtonConfig
+        exportButton.addTarget(self, action: #selector(exportTapped), for: .touchUpInside)
+
+        // Horizontal stack for Reset and Export buttons
+        let actionButtonsStack = UIStackView(arrangedSubviews: [resetButton, exportButton])
+        actionButtonsStack.axis = .horizontal
+        actionButtonsStack.spacing = 20
+        actionButtonsStack.distribution = .fillEqually
 
         // 7. Stack View for Layout
         let stackView = UIStackView(arrangedSubviews: [
@@ -991,18 +1143,26 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
             songInfoStack,
             progressStack, // Keep progress stack above playback controls
             playbackControlsStack, // Use the new playback controls stack here
-            pitchLabel,
-            pitchSlider,
-            speedLabel,
-            speedSlider,
-            reverbLabel,
-            reverbSlider,
+            pitchControlStack,
+            speedControlStack,
+            reverbControlStack,
             UIView(), // Spacer
-            resetButton
+            actionButtonsStack
         ])
         
         stackView.axis = .vertical
         stackView.spacing = 20
+        // Set custom spacing to create groups of controls
+        stackView.setCustomSpacing(30, after: playbackControlsStack)
+        stackView.setCustomSpacing(12, after: pitchControlStack)
+        stackView.setCustomSpacing(12, after: speedControlStack)
+        stackView.setCustomSpacing(30, after: reverbControlStack)
+        
+        // The spacer view should have a low-priority constraint to allow it to shrink
+        if let spacer = stackView.arrangedSubviews[4] as? UIView {
+            spacer.heightAnchor.constraint(greaterThanOrEqualToConstant: 20).isActive = true
+        }
+        
         stackView.alignment = .center
         stackView.translatesAutoresizingMaskIntoConstraints = false
         
@@ -1010,6 +1170,19 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         view.addSubview(addFileButton)
         view.addSubview(stackView)
         
+        // Setup ScrollView
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(scrollView)
+        scrollView.addSubview(stackView)
+        
+        // Set alignment for grouped controls
+        pitchControlStack.widthAnchor.constraint(equalTo: stackView.widthAnchor).isActive = true
+        speedControlStack.widthAnchor.constraint(equalTo: stackView.widthAnchor).isActive = true
+        reverbControlStack.widthAnchor.constraint(equalTo: stackView.widthAnchor).isActive = true
+        
+        // Bring buttons to the front so they don't get scrolled over
+        view.bringSubviewToFront(settingsButton)
+        view.bringSubviewToFront(addFileButton)
         // Auto Layout Constraints
         NSLayoutConstraint.activate([
             // Background constraints
@@ -1028,11 +1201,21 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
             addFileButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
             addFileButton.centerYAnchor.constraint(equalTo: settingsButton.centerYAnchor),
             
-            // Center the stack view and give it padding
-            stackView.topAnchor.constraint(equalTo: settingsButton.bottomAnchor, constant: 10),
-            stackView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 30),
-            stackView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -30),
-            stackView.bottomAnchor.constraint(lessThanOrEqualTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -20),
+            // ScrollView constraints
+            scrollView.topAnchor.constraint(equalTo: settingsButton.bottomAnchor, constant: 10),
+            scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
+            
+            // StackView constraints inside ScrollView
+            stackView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
+            stackView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor, constant: -20),
+            stackView.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor, constant: 30),
+            stackView.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor, constant: -30),
+            
+            // This is crucial: make the stackView's width equal to the scrollView's frame width (minus padding)
+            // to enable vertical-only scrolling.
+            stackView.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor, constant: -60),
             
             // Album Art size constraint
             albumArtImageView.heightAnchor.constraint(equalTo: albumArtImageView.widthAnchor, multiplier: 1.0),
@@ -1040,9 +1223,8 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
             
             // Make sliders and button take up more width
             speedSlider.widthAnchor.constraint(equalTo: stackView.widthAnchor),
-            pitchSlider.widthAnchor.constraint(equalTo: stackView.widthAnchor),
             progressStack.widthAnchor.constraint(equalTo: stackView.widthAnchor),
-            reverbSlider.widthAnchor.constraint(equalTo: stackView.widthAnchor)
+            actionButtonsStack.widthAnchor.constraint(equalTo: stackView.widthAnchor)
         ])
         
         // Constraints for the new playback control buttons
@@ -1077,6 +1259,7 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         rewindButton.isHidden = isHidden // Hide new buttons
         skipButton.isHidden = isHidden   // Hide new buttons
         resetButton.isHidden = isHidden
+        exportButton.isHidden = isHidden
         progressSlider.isHidden = isHidden
         currentTimeLabel.isHidden = isHidden
         durationLabel.isHidden = isHidden
@@ -1176,6 +1359,7 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
                 let isTapArtworkToChangeSongEnabled = UserDefaults.standard.bool(forKey: "isTapArtworkToChangeSongEnabled")
                 let isAccuratePitchEnabled = UserDefaults.standard.bool(forKey: "isAccuratePitchEnabled")
                 let isAccurateSpeedEnabled = UserDefaults.standard.bool(forKey: "isAccurateSpeedEnabled")
+                let isExportButtonEnabled = UserDefaults.standard.bool(forKey: "isExportButtonEnabled", defaultValue: true)
                 
                 settingsViewController(SettingsViewController(), didChangeReverbSliderState: isReverbSliderEnabled)
                 settingsViewController(SettingsViewController(), didChangeAnimatedBackgroundState: isAnimatedBackgroundEnabled)
@@ -1185,6 +1369,7 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
                 settingsViewController(SettingsViewController(), didChangeTapArtworkToChangeSongState: isTapArtworkToChangeSongEnabled)
                 settingsViewController(SettingsViewController(), didChangePrecisePitchState: isAccuratePitchEnabled)
                 settingsViewController(SettingsViewController(), didChangeAccurateSpeedState: isAccurateSpeedEnabled)
+                settingsViewController(SettingsViewController(), didChangeShowExportButtonState: isExportButtonEnabled)
                 
                 // Restore slider values after other settings are applied
                 let pitch = UserDefaults.standard.float(forKey: "pitchValue")
@@ -1311,6 +1496,7 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         settingsVC.isTapArtworkToChangeSongEnabled = UserDefaults.standard.bool(forKey: "isTapArtworkToChangeSongEnabled")
         settingsVC.isAccuratePitchEnabled = self.isAccuratePitchEnabled
         settingsVC.isAccurateSpeedEnabled = self.isAccurateSpeedEnabled
+        settingsVC.isExportButtonEnabled = UserDefaults.standard.bool(forKey: "isExportButtonEnabled", defaultValue: true)
         
         // Embed the SettingsViewController in a UINavigationController to display a navigation bar
         let navController = UINavigationController(rootViewController: settingsVC)
@@ -1375,6 +1561,11 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         self.isAccurateSpeedEnabled = isEnabled
         UserDefaults.standard.set(isEnabled, forKey: "isAccurateSpeedEnabled")
         speedSliderChanged(speedSlider) // Re-evaluate current speed value
+    }
+    
+    func settingsViewController(_ controller: SettingsViewController, didChangeShowExportButtonState isEnabled: Bool) {
+        UserDefaults.standard.set(isEnabled, forKey: "isExportButtonEnabled")
+        exportButton.isHidden = !isEnabled
     }
     
     private func updateBackground(with image: UIImage?, isDynamicEnabled: Bool? = nil) {
@@ -1596,6 +1787,7 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
             // Reset and show controls
             resetControlsState(isHidden: false)
             resetButton.isHidden = false
+            exportButton.isHidden = !UserDefaults.standard.bool(forKey: "isExportButtonEnabled", defaultValue: true)
 
             // Re-apply reverb slider visibility based on user settings
             let isReverbSliderEnabled = UserDefaults.standard.bool(forKey: "isReverbSliderEnabled")
@@ -1648,6 +1840,51 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         currentTimeLabel.text = formatTime(seconds: newTime)
         audioProcessor.updateNowPlayingInfo(isPaused: !audioProcessor.isCurrentlyPlaying())
     }
+    
+    // MARK: Export Action
+    
+    @objc private func exportTapped() {
+        let alert = UIAlertController(title: "Export Audio", message: "This will export the current track with all applied effects. This may take a moment.", preferredStyle: .alert)
+        
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel, handler: nil))
+        
+        alert.addAction(UIAlertAction(title: "Export", style: .default, handler: { [weak self] _ in
+            self?.startExportProcess()
+        }))
+        
+        present(alert, animated: true)
+    }
+    
+    private func startExportProcess() {
+        // Show a loading indicator
+        let activityIndicator = UIActivityIndicatorView(style: .large)
+        activityIndicator.center = view.center
+        activityIndicator.startAnimating()
+        view.addSubview(activityIndicator)
+        view.isUserInteractionEnabled = false // Prevent user interaction during export
+        
+        audioProcessor.exportAudio { [weak self] result in
+            DispatchQueue.main.async {
+                // Hide loading indicator
+                activityIndicator.stopAnimating()
+                activityIndicator.removeFromSuperview()
+                self?.view.isUserInteractionEnabled = true
+                
+                switch result {
+                case .success(let url):
+                    // Present the share sheet
+                    let activityVC = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+                    self?.present(activityVC, animated: true, completion: nil)
+                    
+                case .failure(let error):
+                    // Show an error alert
+                    let errorAlert = UIAlertController(title: "Export Failed", message: error.localizedDescription, preferredStyle: .alert)
+                    errorAlert.addAction(UIAlertAction(title: "OK", style: .default, handler: nil))
+                    self?.present(errorAlert, animated: true)
+                }
+            }
+        }
+    }
 }
 
 // Helper extension to provide a default value for bool(forKey:)
@@ -1686,7 +1923,8 @@ struct AudioEffectsApp: App {
             "isResetSlidersOnTapEnabled": true,
             "isTapArtworkToChangeSongEnabled": true,
             "isAccuratePitchEnabled": false,
-            "isAccurateSpeedEnabled": false
+            "isAccurateSpeedEnabled": false,
+            "isExportButtonEnabled": true
         ])
     }
     var body: some Scene {
