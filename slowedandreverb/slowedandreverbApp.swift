@@ -426,6 +426,7 @@ class ThemeManager {
 protocol SettingsViewControllerDelegate: AnyObject {
     func settingsViewController(_ controller: SettingsViewController, didChangeLinkPitchState isEnabled: Bool)
     func settingsViewController(_ controller: SettingsViewController, didChangeDynamicBackgroundState isEnabled: Bool)
+    func settingsViewController(_ controller: SettingsViewController, didChangeAnimatedBackgroundState isEnabled: Bool)
     func settingsViewController(_ controller: SettingsViewController, didChangeDynamicThemeState isEnabled: Bool)
     func settingsViewController(_ controller: SettingsViewController, didChangeTheme theme: ThemeColor)
     func settingsViewController(_ controller: SettingsViewController, didChangeReverbSliderState isEnabled: Bool)
@@ -440,6 +441,7 @@ class SettingsViewController: UIViewController {
     weak var delegate: SettingsViewControllerDelegate?
     var isPitchLinked: Bool = false
     var isDynamicBackgroundEnabled: Bool = false
+    var isAnimatedBackgroundEnabled: Bool = true
     var isDynamicThemeEnabled: Bool = false
     var currentTheme: ThemeColor = .blue
     var isReverbSliderEnabled: Bool = true
@@ -456,6 +458,9 @@ class SettingsViewController: UIViewController {
     
     private let dynamicBackgroundSwitch = UISwitch()
     private let dynamicBackgroundLabel = UILabel()
+    
+    private let animatedBackgroundSwitch = UISwitch()
+    private let animatedBackgroundLabel = UILabel()
     
     private let dynamicThemeSwitch = UISwitch()
     private let dynamicThemeLabel = UILabel()
@@ -530,6 +535,17 @@ class SettingsViewController: UIViewController {
         let dynamicBackgroundGroup = UIStackView(arrangedSubviews: [dynamicBackgroundStack, dynamicBackgroundDescription])
         dynamicBackgroundGroup.axis = .vertical
         dynamicBackgroundGroup.spacing = 4
+        
+        // --- Animated Background Setting ---
+        animatedBackgroundLabel.text = "Animated Background"
+        animatedBackgroundSwitch.isOn = isAnimatedBackgroundEnabled
+        animatedBackgroundSwitch.addTarget(self, action: #selector(animatedBackgroundSwitchChanged), for: .valueChanged)
+        let animatedBackgroundStack = UIStackView(arrangedSubviews: [animatedBackgroundLabel, animatedBackgroundSwitch])
+        animatedBackgroundStack.spacing = 20
+        let animatedBackgroundDescription = createDescriptionLabel(with: "Enables a slow zooming animation on the dynamic background.")
+        let animatedBackgroundGroup = UIStackView(arrangedSubviews: [animatedBackgroundStack, animatedBackgroundDescription])
+        animatedBackgroundGroup.axis = .vertical
+        animatedBackgroundGroup.spacing = 4
 
         // --- Dynamic Theme Setting ---
         dynamicThemeLabel.text = "Dynamic Theme"
@@ -608,6 +624,7 @@ class SettingsViewController: UIViewController {
         ])
         settingsOptionsStack.axis = .vertical // Corrected spacing
         settingsOptionsStack.addArrangedSubview(dynamicBackgroundGroup) // Re-added dynamic background
+        settingsOptionsStack.addArrangedSubview(animatedBackgroundGroup)
         settingsOptionsStack.insertArrangedSubview(preciseSpeedGroup, at: 4) // Insert precise speed after precise pitch
         settingsOptionsStack.spacing = 25
         settingsOptionsStack.translatesAutoresizingMaskIntoConstraints = false
@@ -692,6 +709,11 @@ class SettingsViewController: UIViewController {
     
     @objc private func dynamicBackgroundSwitchChanged(_ sender: UISwitch) {
         delegate?.settingsViewController(self, didChangeDynamicBackgroundState: sender.isOn)
+        impactFeedbackGenerator.impactOccurred()
+    }
+    
+    @objc private func animatedBackgroundSwitchChanged(_ sender: UISwitch) {
+        delegate?.settingsViewController(self, didChangeAnimatedBackgroundState: sender.isOn)
         impactFeedbackGenerator.impactOccurred()
     }
     
@@ -804,7 +826,7 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         if !hasLoadedInitialState {
             loadSavedState()
             hasLoadedInitialState = true
-            startBackgroundAnimation()
+            updateBackgroundAnimation()
         }
     }
 
@@ -1033,10 +1055,20 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         skipButton.heightAnchor.constraint(equalToConstant: 50).isActive = true
     }
     
-    private func startBackgroundAnimation() {
-        UIView.animate(withDuration: 20, delay: 0, options: [.allowUserInteraction, .autoreverse, .repeat], animations: {
-            self.backgroundImageView.transform = CGAffineTransform(scaleX: 1.8, y: 1.8)
-        })
+    private func updateBackgroundAnimation() {
+        let isAnimated = UserDefaults.standard.bool(forKey: "isAnimatedBackgroundEnabled", defaultValue: true)
+        
+        // Always remove existing animations to avoid conflicts
+        backgroundImageView.layer.removeAllAnimations()
+        
+        if isAnimated {
+            UIView.animate(withDuration: 20, delay: 0, options: [.allowUserInteraction, .autoreverse, .repeat], animations: {
+                self.backgroundImageView.transform = CGAffineTransform(scaleX: 1.8, y: 1.8)
+            })
+        } else {
+            // Reset transform if animation is disabled
+            backgroundImageView.transform = .identity
+        }
     }
     
     /// Hides/shows the controls until a file is loaded.
@@ -1137,6 +1169,7 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
                 settingsViewController(SettingsViewController(), didChangeLinkPitchState: isPitchLinked)
                 
                 let isDynamicBackgroundEnabled = UserDefaults.standard.bool(forKey: "isDynamicBackgroundEnabled")
+                let isAnimatedBackgroundEnabled = UserDefaults.standard.bool(forKey: "isAnimatedBackgroundEnabled", defaultValue: true)
                 let isDynamicThemeEnabled = UserDefaults.standard.bool(forKey: "isDynamicThemeEnabled")
                 let isReverbSliderEnabled = UserDefaults.standard.bool(forKey: "isReverbSliderEnabled")
                 let isResetSlidersOnTapEnabled = UserDefaults.standard.bool(forKey: "isResetSlidersOnTapEnabled")
@@ -1145,6 +1178,7 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
                 let isPreciseSpeedEnabled = UserDefaults.standard.bool(forKey: "isPreciseSpeedEnabled", defaultValue: true) // Load new state
                 
                 settingsViewController(SettingsViewController(), didChangeReverbSliderState: isReverbSliderEnabled)
+                settingsViewController(SettingsViewController(), didChangeAnimatedBackgroundState: isAnimatedBackgroundEnabled)
                 settingsViewController(SettingsViewController(), didChangeDynamicBackgroundState: isDynamicBackgroundEnabled)
                 settingsViewController(SettingsViewController(), didChangeDynamicThemeState: isDynamicThemeEnabled)
                 settingsViewController(SettingsViewController(), didChangeResetSlidersOnTapState: isResetSlidersOnTapEnabled)
@@ -1269,6 +1303,7 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         settingsVC.delegate = self
         settingsVC.currentTheme = ThemeManager.shared.currentTheme
         settingsVC.isPitchLinked = !pitchSlider.isEnabled // Pass current state
+        settingsVC.isAnimatedBackgroundEnabled = UserDefaults.standard.bool(forKey: "isAnimatedBackgroundEnabled", defaultValue: true)
         settingsVC.isDynamicBackgroundEnabled = UserDefaults.standard.bool(forKey: "isDynamicBackgroundEnabled")
         settingsVC.isDynamicThemeEnabled = UserDefaults.standard.bool(forKey: "isDynamicThemeEnabled")
         settingsVC.isReverbSliderEnabled = UserDefaults.standard.bool(forKey: "isReverbSliderEnabled")
@@ -1299,6 +1334,11 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
     func settingsViewController(_ controller: SettingsViewController, didChangeDynamicBackgroundState isEnabled: Bool) {
         UserDefaults.standard.set(isEnabled, forKey: "isDynamicBackgroundEnabled")
         updateBackground(with: albumArtImageView.image, isDynamicEnabled: isEnabled)
+    }
+    
+    func settingsViewController(_ controller: SettingsViewController, didChangeAnimatedBackgroundState isEnabled: Bool) {
+        UserDefaults.standard.set(isEnabled, forKey: "isAnimatedBackgroundEnabled")
+        updateBackgroundAnimation()
     }
     
     func settingsViewController(_ controller: SettingsViewController, didChangeDynamicThemeState isEnabled: Bool) {
@@ -1640,6 +1680,7 @@ struct AudioEffectsApp: App {
         // This ensures that on the first launch, these features are enabled.
         UserDefaults.standard.register(defaults: [
             "isDynamicBackgroundEnabled": true,
+            "isAnimatedBackgroundEnabled": true,
             "isDynamicThemeEnabled": true,
             "isReverbSliderEnabled": true,
             "isResetSlidersOnTapEnabled": true,
