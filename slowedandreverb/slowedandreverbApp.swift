@@ -997,9 +997,233 @@ class SettingsViewController: UIViewController {
     }
 }
 
+// MARK: - Playlist View Controller
+
+/// Protocol to delegate song selection from the playlist view back to the main view controller.
+protocol PlaylistViewControllerDelegate: AnyObject {
+    func playlistViewController(_ controller: PlaylistViewController, didSelectSongAt url: URL)
+}
+
+/// Sorting options for the playlist.
+private enum PlaylistSortOption: Int, CaseIterable {
+    case title, artist, album
+
+    var description: String {
+        switch self {
+        case .title: return "Title"
+        case .artist: return "Artist"
+        case .album: return "Album"
+        }
+    }
+}
+
+/// A view controller that displays the list of songs in the current playlist.
+class PlaylistViewController: UIViewController, UITableViewDataSource, UITableViewDelegate {
+    
+    weak var delegate: PlaylistViewControllerDelegate?
+    var playlistURLs: [URL] = []
+    var currentAudioURL: URL?
+    
+    private let tableView = UITableView()
+    private var songMetadataList: [(url: URL, title: String, artist: String?, album: String?, artwork: UIImage?)] = []
+    private let activityIndicator = UIActivityIndicatorView(style: .medium)
+    
+    private let sortControl = UISegmentedControl(items: PlaylistSortOption.allCases.map { $0.description })
+    private let sortOptionKey = "playlistSortOption"
+    
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        setupUI()
+        loadAllSongMetadata()
+    }
+    
+    private func setupUI() {
+        view.backgroundColor = .systemGroupedBackground
+        
+        // Setup Sort Control in Navigation Bar
+        let savedSortIndex = UserDefaults.standard.integer(forKey: sortOptionKey)
+        sortControl.selectedSegmentIndex = savedSortIndex
+        sortControl.addTarget(self, action: #selector(sortOptionChanged), for: .valueChanged)
+        navigationItem.titleView = sortControl
+        
+        navigationItem.leftBarButtonItem = UIBarButtonItem(barButtonSystemItem: .close, target: self, action: #selector(dismissView))
+        
+        navigationController?.navigationBar.prefersLargeTitles = false // Use standard title bar for sort control
+
+        tableView.translatesAutoresizingMaskIntoConstraints = false
+        tableView.dataSource = self
+        tableView.delegate = self
+        tableView.register(SongTableViewCell.self, forCellReuseIdentifier: SongTableViewCell.reuseIdentifier)
+        tableView.rowHeight = 60
+        view.addSubview(tableView)
+        
+        activityIndicator.translatesAutoresizingMaskIntoConstraints = false
+        activityIndicator.hidesWhenStopped = true
+        view.addSubview(activityIndicator)
+        
+        NSLayoutConstraint.activate([
+            tableView.topAnchor.constraint(equalTo: view.topAnchor),
+            tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            
+            activityIndicator.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            activityIndicator.centerYAnchor.constraint(equalTo: view.centerYAnchor)
+        ])
+    }
+    
+    @objc private func dismissView() {
+        dismiss(animated: true)
+    }
+    
+    @objc private func sortOptionChanged(_ sender: UISegmentedControl) {
+        UserDefaults.standard.set(sender.selectedSegmentIndex, forKey: sortOptionKey)
+        sortMetadataList()
+        tableView.reloadData()
+    }
+    
+    private func loadAllSongMetadata() {
+        activityIndicator.startAnimating()
+        tableView.isHidden = true
+        
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            
+            let localMetadataList = self.playlistURLs.map { url -> (url: URL, title: String, artist: String?, album: String?, artwork: UIImage?) in
+                let asset = AVAsset(url: url)
+                let title = asset.commonMetadata.first(where: { $0.commonKey == .commonKeyTitle })?.stringValue ?? url.deletingPathExtension().lastPathComponent
+                let artist = asset.commonMetadata.first(where: { $0.commonKey == .commonKeyArtist })?.stringValue
+                let album = asset.commonMetadata.first(where: { $0.commonKey == .commonKeyAlbumName })?.stringValue // Corrected key
+                var artwork: UIImage? = nil
+                if let artworkItem = asset.commonMetadata.first(where: { $0.commonKey == .commonKeyArtwork }), let imageData = artworkItem.dataValue {
+                    artwork = UIImage(data: imageData)
+                }
+                return (url, title, artist, album, artwork)
+            }
+            
+            DispatchQueue.main.async {
+                self.songMetadataList = localMetadataList
+                self.sortMetadataList()
+                self.activityIndicator.stopAnimating()
+                self.tableView.isHidden = false
+                self.tableView.reloadData()
+            }
+        }
+    }
+    
+    private func sortMetadataList() {
+        guard let sortOption = PlaylistSortOption(rawValue: sortControl.selectedSegmentIndex) else { return }
+        
+        songMetadataList.sort { (song1, song2) in
+            switch sortOption {
+            case .title:
+                return song1.title.localizedCaseInsensitiveCompare(song2.title) == .orderedAscending
+            case .artist:
+                return (song1.artist ?? "").localizedCaseInsensitiveCompare(song2.artist ?? "") == .orderedAscending
+            case .album:
+                // Sort by album, then by title within the album
+                let albumComparison = (song1.album ?? "").localizedCaseInsensitiveCompare(song2.album ?? "")
+                return albumComparison == .orderedSame ? song1.title.localizedCaseInsensitiveCompare(song2.title) == .orderedAscending : albumComparison == .orderedAscending
+            }
+        }
+    }
+    
+    // MARK: - UITableViewDataSource
+    
+    func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
+        return songMetadataList.count
+    }
+    
+    func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+        guard let cell = tableView.dequeueReusableCell(withIdentifier: SongTableViewCell.reuseIdentifier, for: indexPath) as? SongTableViewCell else {
+            return UITableViewCell()
+        }
+        let metadata = songMetadataList[indexPath.row]
+        cell.configure(with: metadata.artwork, title: metadata.title, artist: metadata.artist)
+        
+        // Highlight the currently playing song
+        if metadata.url == currentAudioURL {
+            cell.accessoryType = .checkmark
+            cell.tintColor = view.tintColor
+        } else {
+            cell.accessoryType = .none
+        }
+        return cell
+    }
+    
+    func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+        let selectedURL = songMetadataList[indexPath.row].url
+        delegate?.playlistViewController(self, didSelectSongAt: selectedURL)
+        dismiss(animated: true)
+    }
+}
+
+/// A custom table view cell to display song information.
+class SongTableViewCell: UITableViewCell {
+    static let reuseIdentifier = "SongTableViewCell"
+    
+    private let artworkImageView = UIImageView()
+    private let titleLabel = UILabel()
+    private let artistLabel = UILabel()
+    
+    override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
+        super.init(style: style, reuseIdentifier: reuseIdentifier)
+        setupCellUI()
+    }
+    
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+    
+    private func setupCellUI() {
+        artworkImageView.translatesAutoresizingMaskIntoConstraints = false
+        artworkImageView.contentMode = .scaleAspectFill
+        artworkImageView.layer.cornerRadius = 4
+        artworkImageView.clipsToBounds = true
+        artworkImageView.backgroundColor = .secondarySystemBackground
+        contentView.addSubview(artworkImageView)
+        
+        titleLabel.font = .systemFont(ofSize: 16, weight: .medium)
+        artistLabel.font = .systemFont(ofSize: 14)
+        artistLabel.textColor = .secondaryLabel
+        
+        let textStack = UIStackView(arrangedSubviews: [titleLabel, artistLabel])
+        textStack.translatesAutoresizingMaskIntoConstraints = false
+        textStack.axis = .vertical
+        textStack.spacing = 2
+        contentView.addSubview(textStack)
+        
+        NSLayoutConstraint.activate([
+            artworkImageView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+            artworkImageView.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
+            artworkImageView.widthAnchor.constraint(equalToConstant: 44),
+            artworkImageView.heightAnchor.constraint(equalToConstant: 44),
+            
+            textStack.leadingAnchor.constraint(equalTo: artworkImageView.trailingAnchor, constant: 12),
+            textStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -40),
+            textStack.centerYAnchor.constraint(equalTo: contentView.centerYAnchor)
+        ])
+    }
+    
+    func configure(with artwork: UIImage?, title: String, artist: String?) {
+        titleLabel.text = title
+        artistLabel.text = artist
+        artistLabel.isHidden = artist == nil
+        artworkImageView.image = artwork ?? UIImage(systemName: "music.note")
+    }
+    
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        artworkImageView.image = nil
+        titleLabel.text = nil
+        artistLabel.text = nil
+        accessoryType = .none
+    }
+}
+
 // MARK: - 2. User Interface and File Picker
 
-class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, SettingsViewControllerDelegate {
+class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, SettingsViewControllerDelegate, PlaylistViewControllerDelegate {
 
     // MARK: Properties
     
@@ -1050,6 +1274,10 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
     // New buttons for rewind and skip
     private let rewindButton = UIButton(type: .system)
     private let skipButton = UIButton(type: .system)
+    
+    // New buttons for playlist navigation
+    private let previousTrackButton = UIButton(type: .system)
+    private let nextTrackButton = UIButton(type: .system)
     
     // Scroll View for main content
     private let scrollView = UIScrollView()
@@ -1151,7 +1379,7 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         
         // Playlist Button
         playlistButton.setImage(UIImage(systemName: "music.note.list"), for: .normal)
-        playlistButton.showsMenuAsPrimaryAction = true
+        playlistButton.addTarget(self, action: #selector(openPlaylistView), for: .touchUpInside)
         playlistButton.translatesAutoresizingMaskIntoConstraints = false
         playlistButton.isHidden = true // Hidden by default
         
@@ -1201,13 +1429,21 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         playPauseButton.contentHorizontalAlignment = .fill
         playPauseButton.imageEdgeInsets = UIEdgeInsets(top: 15, left: 15, bottom: 15, right: 15) // Add some padding
 
-        // Rewind 10 seconds button
-        rewindButton.setImage(UIImage(systemName: "gobackward.10"), for: .normal) // Default icon
-        rewindButton.addTarget(self, action: #selector(rewindAction), for: .touchUpInside)
+        // Rewind 10s button
+        rewindButton.setImage(UIImage(systemName: "gobackward.10"), for: .normal)
+        rewindButton.addTarget(self, action: #selector(rewind10Seconds), for: .touchUpInside)
 
-        // Skip 10 seconds button
-        skipButton.setImage(UIImage(systemName: "goforward.10"), for: .normal) // Default icon
-        skipButton.addTarget(self, action: #selector(skipAction), for: .touchUpInside)
+        // Skip 10s button
+        skipButton.setImage(UIImage(systemName: "goforward.10"), for: .normal)
+        skipButton.addTarget(self, action: #selector(skip10Seconds), for: .touchUpInside)
+        
+        // Previous Track button
+        previousTrackButton.setImage(UIImage(systemName: "backward.end.fill"), for: .normal)
+        previousTrackButton.addTarget(self, action: #selector(playPreviousSong), for: .touchUpInside)
+        
+        // Next Track button
+        nextTrackButton.setImage(UIImage(systemName: "forward.end.fill"), for: .normal)
+        nextTrackButton.addTarget(self, action: #selector(playNextSong), for: .touchUpInside)
 
         // Progress Slider & Labels
         progressSlider.minimumValue = 0
@@ -1230,11 +1466,11 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         durationLabel.widthAnchor.constraint(equalToConstant: 40).isActive = true
 
         // Horizontal stack for playback controls (rewind, play/pause, skip)
-        let playbackControlsStack = UIStackView(arrangedSubviews: [rewindButton, playPauseButton, skipButton])
+        let playbackControlsStack = UIStackView(arrangedSubviews: [previousTrackButton, rewindButton, playPauseButton, skipButton, nextTrackButton])
         playbackControlsStack.axis = .horizontal
         playbackControlsStack.spacing = 20 // Adjust spacing as needed
         playbackControlsStack.alignment = .center
-        playbackControlsStack.distribution = .fillEqually // Distribute space evenly
+        playbackControlsStack.distribution = .equalCentering // Distribute space evenly
 
         // Pitch Slider Setup (Pitch: -12 semitones to +12 semitones)
         pitchLabel.text = "Pitch (0 st)"
@@ -1443,6 +1679,8 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         playPauseButton.heightAnchor.constraint(equalToConstant: 80).isActive = true
         rewindButton.widthAnchor.constraint(equalToConstant: 50).isActive = true
         rewindButton.heightAnchor.constraint(equalToConstant: 50).isActive = true
+        previousTrackButton.widthAnchor.constraint(equalToConstant: 50).isActive = true
+        previousTrackButton.heightAnchor.constraint(equalToConstant: 50).isActive = true
         skipButton.widthAnchor.constraint(equalToConstant: 50).isActive = true
         skipButton.heightAnchor.constraint(equalToConstant: 50).isActive = true
     }
@@ -1466,8 +1704,10 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
     /// Hides/shows the controls until a file is loaded.
     private func resetControlsState(isHidden: Bool) {
         playPauseButton.isHidden = isHidden
-        rewindButton.isHidden = isHidden // Hide new buttons
-        skipButton.isHidden = isHidden   // Hide new buttons
+        rewindButton.isHidden = isHidden
+        skipButton.isHidden = isHidden
+        previousTrackButton.isHidden = isHidden
+        nextTrackButton.isHidden = isHidden
         resetButton.isHidden = isHidden
         exportButton.isHidden = isHidden
         progressSlider.isHidden = isHidden
@@ -1722,6 +1962,21 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         impactFeedbackGenerator.impactOccurred()
     }
     
+    @objc private func openPlaylistView() {
+        let playlistVC = PlaylistViewController()
+        playlistVC.delegate = self
+        playlistVC.playlistURLs = self.playlistURLs
+        playlistVC.currentAudioURL = self.currentAudioURL
+        
+        let navController = UINavigationController(rootViewController: playlistVC)
+        if let sheet = navController.sheetPresentationController {
+            sheet.detents = [.medium(), .large()]
+            sheet.prefersGrabberVisible = true
+        }
+        
+        present(navController, animated: true)
+    }
+    
     private func updatePlayPauseButtonState() {
         let isPlaying = audioProcessor.isCurrentlyPlaying()
         let imageName = isPlaying ? "pause.fill" : "play.fill"
@@ -1850,49 +2105,56 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
     
     func settingsViewController(_ controller: SettingsViewController, didChangePlaylistModeState isEnabled: Bool) {
         UserDefaults.standard.set(isEnabled, forKey: "isPlaylistModeEnabled")
-        playlistButton.isHidden = !isEnabled
+        
+        // Stop playback and clear the current song when mode changes
+        clearCurrentSongAndStopPlayback()
         
         if isEnabled && playlistURLs.isEmpty {
             // If turning on and no playlist is loaded, prompt to select a folder
             openFolderPicker()
         } else if !isEnabled { // When turning off
-            // Clear playlist when turning mode off
+            // When turning off, also clear the saved playlist bookmarks and the URL list
             playlistURLs = []
             UserDefaults.standard.removeObject(forKey: "playlistBookmarks")
-        } else { // When turning on and a playlist is already loaded
-            updatePlaylistMenu()
         }
         
         updatePlaylistControls(isPlaylistMode: isEnabled)
     }
     
+    /// Stops playback and resets the UI to the "No File Loaded" state.
+    private func clearCurrentSongAndStopPlayback() {
+        if audioProcessor.isCurrentlyPlaying() {
+            audioProcessor.togglePlayback() // This will stop playback and update the Now Playing info
+        }
+        
+        // Reset UI elements
+        resetControlsState(isHidden: true)
+        songTitleLabel.text = "No File Loaded"
+        artistNameLabel.text = nil
+        albumArtImageView.image = UIImage(systemName: "music.note")
+        updateBackground(with: nil)
+        
+        // Clear state variables and saved data for the last song
+        currentAudioURL = nil
+        UserDefaults.standard.removeObject(forKey: "lastAudioFileBookmark")
+        UserDefaults.standard.removeObject(forKey: "lastPlaybackPosition")
+    }
+    
     /// Updates the skip/rewind buttons to be next/previous track buttons.
     private func updatePlaylistControls(isPlaylistMode: Bool) {
         audioProcessor.updatePlaylistRemoteCommands(isEnabled: isPlaylistMode)
+        playlistButton.isHidden = !isPlaylistMode
         
-        if isPlaylistMode {
-            rewindButton.setImage(UIImage(systemName: "backward.end.fill"), for: .normal)
-            skipButton.setImage(UIImage(systemName: "forward.end.fill"), for: .normal)
-        } else {
-            rewindButton.setImage(UIImage(systemName: "gobackward.10"), for: .normal)
-            skipButton.setImage(UIImage(systemName: "goforward.10"), for: .normal)
-        }
-    }
-    
-    @objc private func rewindAction() {
-        if UserDefaults.standard.bool(forKey: "isPlaylistModeEnabled") {
-            playPreviousSong()
-        } else {
-            rewind10Seconds()
-        }
-    }
-
-    @objc private func skipAction() {
-        if UserDefaults.standard.bool(forKey: "isPlaylistModeEnabled") {
-            playNextSong()
-        } else {
-            skip10Seconds()
-        }
+        let addFileIconName = isPlaylistMode ? "folder.badge.plus" : "plus"
+        addFileButton.setImage(UIImage(systemName: addFileIconName), for: .normal)
+        
+        // Show/hide the next/previous track buttons based on playlist mode
+        previousTrackButton.isHidden = !isPlaylistMode
+        nextTrackButton.isHidden = !isPlaylistMode
+        
+        // The 10-second skip buttons are always visible when controls are shown,
+        // so we don't need to change their icons or visibility here.
+        // Their actions are now directly tied to their selectors.
     }
     
     private func updateBackground(with image: UIImage?, isDynamicEnabled: Bool? = nil) {
@@ -2093,12 +2355,17 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
     // MARK: File Picker Logic
 
     @objc func openFilePicker() {
-        // Define the types of files we want to allow the user to select.
-        let supportedTypes: [UTType] = [.mp3, .folder]
+        let isPlaylistMode = UserDefaults.standard.bool(forKey: "isPlaylistModeEnabled")
+        
+        let supportedTypes: [UTType]
+        if isPlaylistMode {
+            supportedTypes = [.folder]
+        } else {
+            supportedTypes = [.mp3]
+        }
         
         // Use 'asCopy: true' to ensure the file is copied into the app's sandbox
-        // For playlist mode, we don't want to copy, just get access.
-        let shouldCopy = !UserDefaults.standard.bool(forKey: "isPlaylistModeEnabled")
+        let shouldCopy = !isPlaylistMode
         let picker = UIDocumentPickerViewController(forOpeningContentTypes: supportedTypes, asCopy: shouldCopy)
         
         picker.directoryURL = getDocumentsDirectory() // Start in a known directory
@@ -2151,7 +2418,6 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
             
             self.playlistURLs = fileURLs
             UserDefaults.standard.set(bookmarkDataArray, forKey: "playlistBookmarks")
-            updatePlaylistMenu()
             
             // Load the first song from the new playlist
             if let firstSongURL = fileURLs.first {
@@ -2175,7 +2441,6 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
                 return nil
             }
         }
-        updatePlaylistMenu()
     }
 
     // MARK: UIDocumentPickerDelegate Methods
@@ -2209,9 +2474,6 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
             if shouldAccess { url.stopAccessingSecurityScopedResource() }
         }
         self.currentAudioURL = url
-        if UserDefaults.standard.bool(forKey: "isPlaylistModeEnabled") {
-            updatePlaylistMenu() // Update menu to show checkmark on the new song
-        }
         
         // Load the audio file and get its metadata
         if let metadata = audioProcessor.loadAudioFile(url: url) {
@@ -2275,30 +2537,18 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         }
     }
 
-    private func updatePlaylistMenu() {
-        let menuActions = playlistURLs.map { url in
-            let action = UIAction(title: url.deletingPathExtension().lastPathComponent) { [weak self] _ in
-                self?.loadAudioFile(url: url, andPlay: true)
-            }
-            if url == self.currentAudioURL {
-                action.state = .on
-            }
-            return action
-        }
-        
-        let changeFolderAction = UIAction(title: "Change Folder...", image: UIImage(systemName: "folder.badge.plus")) { [weak self] _ in
-            self?.openFolderPicker()
-        }
-        
-        playlistButton.menu = UIMenu(title: "Playlist", children: menuActions + [UIMenu(title: "", options: .displayInline, children: [changeFolderAction])])
-    }
-
     func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
         print("File picking was cancelled.")
         // If user cancels folder selection when turning on playlist mode, turn it back off.
         if UserDefaults.standard.bool(forKey: "isPlaylistModeEnabled") && playlistURLs.isEmpty {
             settingsViewController(SettingsViewController(), didChangePlaylistModeState: false)
         }
+    }
+    
+    // MARK: PlaylistViewControllerDelegate
+    
+    func playlistViewController(_ controller: PlaylistViewController, didSelectSongAt url: URL) {
+        loadAudioFile(url: url, andPlay: true)
     }
 
     // MARK: New Rewind/Skip Actions
