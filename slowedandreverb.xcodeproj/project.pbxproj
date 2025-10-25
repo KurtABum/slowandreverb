@@ -8,6 +8,7 @@
 
 /* Begin PBXFileReference section */
 		451F836A2EAA676B00F72198 /* slowedandreverb.xcodeproj */ = {isa = PBXFileReference; lastKnownFileType = "wrapper.pb-project"; path = slowedandreverb.xcodeproj; sourceTree = "<group>"; };
+		4525C39A2EACF8FF00667FE0 /* slowedandreverb.xcodeproj */ = {isa = PBXFileReference; lastKnownFileType = "wrapper.pb-project"; path = slowedandreverb.xcodeproj; sourceTree = "<group>"; };
 		45EC836D2EA8ACFA00A85E48 /* slowedandreverb.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = slowedandreverb.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -44,6 +45,11 @@
 
 /* Begin PBXGroup section */
 		451F836C2EAA676B00F72198 /* Products */ = {
+			isa = PBXGroup;
+			name = Products;
+			sourceTree = "<group>";
+		};
+		4525C39D2EACF8FF00667FE0 /* Products */ = {
 			isa = PBXGroup;
 			name = Products;
 			sourceTree = "<group>";
@@ -120,6 +126,10 @@
 				{
 					ProductGroup = 451F836C2EAA676B00F72198 /* Products */;
 					ProjectRef = 451F836A2EAA676B00F72198 /* slowedandreverb.xcodeproj */;
+				},
+				{
+					ProductGroup = 4525C39D2EACF8FF00667FE0 /* Products */;
+					ProjectRef = 4525C39A2EACF8FF00667FE0 /* slowedandreverb.xcodeproj */;
 				},
 			);
 			projectRoot = "";
