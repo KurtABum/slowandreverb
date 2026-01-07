@@ -11,6 +11,7 @@
 		4525C39A2EACF8FF00667FE0 /* slowedandreverb.xcodeproj */ = {isa = PBXFileReference; lastKnownFileType = "wrapper.pb-project"; path = slowedandreverb.xcodeproj; sourceTree = "<group>"; };
 		4525C3AB2EACF9EC00667FE0 /* slowedandreverb.xcodeproj */ = {isa = PBXFileReference; lastKnownFileType = "wrapper.pb-project"; path = slowedandreverb.xcodeproj; sourceTree = "<group>"; };
 		45E896C02F04E9EB0036CB34 /* slowedandreverb.xcodeproj */ = {isa = PBXFileReference; lastKnownFileType = "wrapper.pb-project"; path = slowedandreverb.xcodeproj; sourceTree = "<group>"; };
+		45E897102F0D3B590036CB34 /* slowedandreverb.xcodeproj */ = {isa = PBXFileReference; lastKnownFileType = "wrapper.pb-project"; path = slowedandreverb.xcodeproj; sourceTree = "<group>"; };
 		45EC836D2EA8ACFA00A85E48 /* slowedandreverb.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = slowedandreverb.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -62,6 +63,11 @@
 			sourceTree = "<group>";
 		};
 		45E896C32F04E9EB0036CB34 /* Products */ = {
+			isa = PBXGroup;
+			name = Products;
+			sourceTree = "<group>";
+		};
+		45E897132F0D3B590036CB34 /* Products */ = {
 			isa = PBXGroup;
 			name = Products;
 			sourceTree = "<group>";
@@ -135,6 +141,10 @@
 			productRefGroup = 45EC836E2EA8ACFA00A85E48 /* Products */;
 			projectDirPath = "";
 			projectReferences = (
+				{
+					ProductGroup = 45E897132F0D3B590036CB34 /* Products */;
+					ProjectRef = 45E897102F0D3B590036CB34 /* slowedandreverb.xcodeproj */;
+				},
 				{
 					ProductGroup = 451F836C2EAA676B00F72198 /* Products */;
 					ProjectRef = 451F836A2EAA676B00F72198 /* slowedandreverb.xcodeproj */;
