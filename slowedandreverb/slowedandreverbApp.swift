@@ -509,7 +509,7 @@ class AudioProcessor {
     /// Exports the currently loaded audio file with the applied effects to a temporary file.
     /// - Parameters:
     ///   - completion: A closure called when the export is complete, returning the URL of the exported file or an error.
-    func exportAudio(completion: @escaping (Result<URL, Error>) -> Void) {
+    func exportAudio(progress: ((Float) -> Void)? = nil, completion: @escaping (Result<URL, Error>) -> Void) {
         guard let sourceFile = self.audioFile else {
             completion(.failure(ExportError.noAudioFileLoaded))
             return
@@ -571,6 +571,8 @@ class AudioProcessor {
                 switch status {
                 case .success:
                     try outputFile.write(from: buffer)
+                    let p = Float(engine.manualRenderingSampleTime) / Float(sourceFile.length)
+                    progress?(p)
                 case .cannotDoInCurrentContext:
                     continue // Try again
                 case .error:
@@ -593,9 +595,10 @@ class AudioProcessor {
             // Restart engine for future playback
             try engine.start()
             
-            if wasPlaying {
-                playerNode.play()
-            }
+            // Reset playback to beginning and pause
+            lastPlaybackPosition = 0
+            pausedPosition = nil
+            isPlaying = false
             
             isExporting = false
             completion(.success(outputURL))
@@ -2814,19 +2817,60 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
     }
     
     private func startExportProcess() {
-        // Show a loading indicator
-        let activityIndicator = UIActivityIndicatorView(style: .large)
-        activityIndicator.center = view.center
-        activityIndicator.startAnimating()
-        view.addSubview(activityIndicator)
+        // Create a custom overlay view for progress
+        let overlayView = UIView(frame: view.bounds)
+        overlayView.backgroundColor = UIColor.black.withAlphaComponent(0.6)
+        overlayView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        
+        let containerView = UIView()
+        containerView.backgroundColor = .secondarySystemGroupedBackground
+        containerView.layer.cornerRadius = 12
+        containerView.translatesAutoresizingMaskIntoConstraints = false
+        
+        let titleLabel = UILabel()
+        titleLabel.text = "Exporting..."
+        titleLabel.font = .systemFont(ofSize: 17, weight: .semibold)
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        
+        let progressBar = UIProgressView(progressViewStyle: .default)
+        progressBar.translatesAutoresizingMaskIntoConstraints = false
+        
+        containerView.addSubview(titleLabel)
+        containerView.addSubview(progressBar)
+        overlayView.addSubview(containerView)
+        view.addSubview(overlayView)
+        
+        NSLayoutConstraint.activate([
+            containerView.centerXAnchor.constraint(equalTo: overlayView.centerXAnchor),
+            containerView.centerYAnchor.constraint(equalTo: overlayView.centerYAnchor),
+            containerView.widthAnchor.constraint(equalToConstant: 220),
+            containerView.heightAnchor.constraint(equalToConstant: 100),
+            
+            titleLabel.topAnchor.constraint(equalTo: containerView.topAnchor, constant: 20),
+            titleLabel.centerXAnchor.constraint(equalTo: containerView.centerXAnchor),
+            
+            progressBar.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 20),
+            progressBar.leadingAnchor.constraint(equalTo: containerView.leadingAnchor, constant: 20),
+            progressBar.trailingAnchor.constraint(equalTo: containerView.trailingAnchor, constant: -20)
+        ])
+        
         view.isUserInteractionEnabled = false // Prevent user interaction during export
         
-        audioProcessor.exportAudio { [weak self] result in
+        audioProcessor.exportAudio(progress: { progress in
             DispatchQueue.main.async {
-                // Hide loading indicator
-                activityIndicator.stopAnimating()
-                activityIndicator.removeFromSuperview()
+                progressBar.setProgress(progress, animated: true)
+            }
+        }) { [weak self] result in
+            DispatchQueue.main.async {
+                // Remove overlay
+                overlayView.removeFromSuperview()
                 self?.view.isUserInteractionEnabled = true
+                
+                // Update UI to reflect paused state at beginning
+                self?.updatePlayPauseButtonState()
+                self?.progressSlider.value = 0
+                self?.currentTimeLabel.text = self?.formatTime(seconds: 0)
+                self?.audioProcessor.updateNowPlayingInfo(isPaused: true)
                 
                 switch result {
                 case .success(let url):
