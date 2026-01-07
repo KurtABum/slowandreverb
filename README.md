@@ -1,7 +1,7 @@
 # Slowed + Reverb
 
 <p align="center">
-  <img src="images/1.PNG width="30%" />
+  <img src="images/1.PNG" width="30%" />
   <img src="images/2.PNG" width="30%" />
   <img src="images/3.PNG" width="30%" />
 </p>
@@ -9,6 +9,11 @@
 An iOS application designed for real-time audio manipulation, allowing users to create, listen to, and export "slowed and reverb" remixes with professional-grade audio effects.
 
 ## Key Features
+<p align="center">
+  <img src="images/4.PNG" width="30%" />
+  <img src="images/5.PNG" width="30%" />
+  <img src="images/6.PNG" width="30%" />
+</p>
 
 ### 🎛 Advanced Audio Engine
 *   **Independent Time & Pitch Shifting**: Utilizes `AVAudioUnitTimePitch` to adjust playback rate (0.5x to 2.0x) and pitch (-12 to +12 semitones) separately.
