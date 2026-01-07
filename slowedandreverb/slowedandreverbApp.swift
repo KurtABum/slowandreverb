@@ -509,7 +509,7 @@ class AudioProcessor {
     /// Exports the currently loaded audio file with the applied effects to a temporary file.
     /// - Parameters:
     ///   - completion: A closure called when the export is complete, returning the URL of the exported file or an error.
-    func exportAudio(progress: ((Float) -> Void)? = nil, completion: @escaping (Result<URL, Error>) -> Void) {
+    func exportAudio(bitrate: Int, progress: ((Float) -> Void)? = nil, completion: @escaping (Result<URL, Error>) -> Void) {
         guard let sourceFile = self.audioFile else {
             completion(.failure(ExportError.noAudioFileLoaded))
             return
@@ -559,7 +559,8 @@ class AudioProcessor {
                 AVFormatIDKey: kAudioFormatMPEG4AAC,
                 AVSampleRateKey: sourceFile.processingFormat.sampleRate,
                 AVNumberOfChannelsKey: sourceFile.processingFormat.channelCount,
-                AVEncoderBitRateKey: 192000 // 192 kbps
+                AVEncoderBitRateKey: bitrate,
+                AVEncoderAudioQualityKey: AVAudioQuality.max.rawValue
             ]
             
             // Create the output file using the AAC settings.
@@ -2132,6 +2133,7 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
                 playNextSong()
             } else {
                 audioProcessor.pause()
+                audioProcessor.seek(to: 0)
                 playPauseButton.setImage(UIImage(systemName: "play.fill"), for: .normal)
                 progressSlider.value = 0 // Reset slider to beginning
                 currentTimeLabel.text = formatTime(seconds: 0)
@@ -2819,18 +2821,32 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
     // MARK: Export Action
     
     @objc private func exportTapped() {
-        let alert = UIAlertController(title: "Export Audio", message: "This will export the current track with all applied effects. This may take a moment.", preferredStyle: .alert)
+        let alert = UIAlertController(title: "Export Quality", message: "Select the audio quality for export.", preferredStyle: .actionSheet)
+        
+        let options: [(title: String, bitrate: Int)] = [
+            ("Low (128 kbps)", 128000),
+            ("Medium (192 kbps)", 192000),
+            ("High (256 kbps)", 256000),
+            ("Best (320 kbps)", 320000)
+        ]
+        
+        for option in options {
+            alert.addAction(UIAlertAction(title: option.title, style: .default) { [weak self] _ in
+                self?.startExportProcess(bitrate: option.bitrate)
+            })
+        }
         
         alert.addAction(UIAlertAction(title: "Cancel", style: .cancel, handler: nil))
         
-        alert.addAction(UIAlertAction(title: "Export", style: .default, handler: { [weak self] _ in
-            self?.startExportProcess()
-        }))
+        if let popover = alert.popoverPresentationController {
+            popover.sourceView = exportButton
+            popover.sourceRect = exportButton.bounds
+        }
         
         present(alert, animated: true)
     }
     
-    private func startExportProcess() {
+    private func startExportProcess(bitrate: Int) {
         // Create a custom overlay view for progress
         let overlayView = UIView(frame: view.bounds)
         overlayView.backgroundColor = UIColor.black.withAlphaComponent(0.6)
@@ -2870,7 +2886,7 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         
         view.isUserInteractionEnabled = false // Prevent user interaction during export
         
-        audioProcessor.exportAudio(progress: { progress in
+        audioProcessor.exportAudio(bitrate: bitrate, progress: { progress in
             DispatchQueue.main.async {
                 progressBar.setProgress(progress, animated: true)
             }
