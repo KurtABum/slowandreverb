@@ -1,5 +1,11 @@
 # Slowed + Reverb
 
+<p align="center">
+  <img src="images/screenshot1.png" width="30%" />
+  <img src="images/screenshot2.png" width="30%" />
+  <img src="images/screenshot3.png" width="30%" />
+</p>
+
 An iOS application designed for real-time audio manipulation, allowing users to create, listen to, and export "slowed and reverb" remixes with professional-grade audio effects.
 
 ## Key Features
