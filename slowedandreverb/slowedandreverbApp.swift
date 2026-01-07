@@ -534,11 +534,25 @@ class AudioProcessor {
             // Create a temporary file URL for the output
             // Construct filename: [Song Name] [Speed] [Pitch] [Reverb].m4a
             let name = self.currentTitle ?? "Exported"
-            let speed = String(format: "Speed %.2fx", timePitchNode.rate)
-            let pitch = String(format: "Pitch %dst", Int((timePitchNode.pitch / 100.0).rounded()))
-            let reverb = String(format: "Reverb %d%%", Int(reverbNode.wetDryMix.rounded()))
-            let safeName = name.replacingOccurrences(of: "/", with: "_")
-            let outputURL = FileManager.default.temporaryDirectory.appendingPathComponent("\(safeName) \(speed) \(pitch) \(reverb).m4a")
+            var filenameComponents = [name]
+            
+            if abs(timePitchNode.rate - 1.0) > 0.01 {
+                filenameComponents.append(String(format: "Speed %.2fx", timePitchNode.rate))
+            }
+            
+            let pitchSemitones = Int((timePitchNode.pitch / 100.0).rounded())
+            if pitchSemitones != 0 {
+                filenameComponents.append(String(format: "Pitch %dst", pitchSemitones))
+            }
+            
+            let reverbAmount = Int(reverbNode.wetDryMix.rounded())
+            if reverbAmount > 0 {
+                filenameComponents.append(String(format: "Reverb %d%%", reverbAmount))
+            }
+            
+            let fileName = filenameComponents.joined(separator: " ")
+            let safeName = fileName.replacingOccurrences(of: "/", with: "_")
+            let outputURL = FileManager.default.temporaryDirectory.appendingPathComponent("\(safeName).m4a")
             
             // Define AAC settings
             let settings: [String: Any] = [
@@ -1810,7 +1824,7 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
             scrollView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
             
             // StackView constraints inside ScrollView
-            stackView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
+            stackView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor, constant: 10),
             stackView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor, constant: -20),
             stackView.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor, constant: 30),
             stackView.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor, constant: -30),
@@ -1821,7 +1835,7 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
             
             // Album Art size constraint
             albumArtImageView.heightAnchor.constraint(equalTo: albumArtImageView.widthAnchor, multiplier: 1.0),
-            albumArtImageView.widthAnchor.constraint(equalTo: stackView.widthAnchor, multiplier: 0.65), // 65% width
+            albumArtImageView.widthAnchor.constraint(equalTo: stackView.widthAnchor, multiplier: 0.7), // 70% width
             
             // Make sliders and button take up more width
             speedSlider.widthAnchor.constraint(equalTo: stackView.widthAnchor),
