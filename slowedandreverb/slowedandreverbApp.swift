@@ -26,12 +26,14 @@ class AudioProcessor {
     private var isExporting = false // Flag to prevent concurrent exports
     
     private var audioFile: AVAudioFile?
+    private var currentTitle: String?
     private var isPlaying = false
     
     // Properties for progress tracking
     private var audioFileLength: AVAudioFramePosition = 0
     private var audioSampleRate: Double = 0
     private var lastPlaybackPosition: AVAudioFramePosition = 0
+    private var pausedPosition: AVAudioFramePosition? // Tracks position when paused
     
     // Property to hold the static Now Playing info
     private var nowPlayingInfo: [String: Any]?
@@ -117,6 +119,7 @@ class AudioProcessor {
     func loadAudioFile(url: URL) -> (title: String, artist: String?, artwork: UIImage?)? {
         // Stop current playback and reset engine
         playerNode.stop()
+        engine.stop()
         isPlaying = false
         
         do {
@@ -126,6 +129,7 @@ class AudioProcessor {
             self.audioFileLength = file.length
             self.audioSampleRate = file.processingFormat.sampleRate
             self.lastPlaybackPosition = 0 // Reset position for new file
+            self.pausedPosition = nil
             
             // Reconnect nodes with the audio file's processing format to ensure effects work correctly.
             let fileFormat = file.processingFormat
@@ -172,6 +176,7 @@ class AudioProcessor {
             }
 
             let title = songTitle ?? url.deletingPathExtension().lastPathComponent
+            self.currentTitle = title
             
             print("Audio file loaded: \(title)")
             return (title: title, artist: artistName, artwork: artworkImage)
@@ -180,6 +185,7 @@ class AudioProcessor {
             print("Error loading audio file: \(error.localizedDescription)")
             self.audioFile = nil
             self.nowPlayingInfo = nil // Clear info on failure
+            self.currentTitle = nil
             return nil
         }
     }
@@ -191,9 +197,9 @@ class AudioProcessor {
             return
         }
 
-        if playerNode.isPlaying {
+        if isPlaying {
+            pausedPosition = getCurrentFramePosition() // Capture position before pausing
             playerNode.pause()
-            lastPlaybackPosition = getCurrentFramePosition() ?? lastPlaybackPosition
             isPlaying = false
             print("Playback paused.")
         } else {
@@ -213,6 +219,7 @@ class AudioProcessor {
                 guard let file = audioFile else { return }
                 // When re-scheduling after finishing, start from the beginning
                 lastPlaybackPosition = 0
+                pausedPosition = nil
                 let frameCount = AVAudioFrameCount(audioFileLength - lastPlaybackPosition)
                 playerNode.scheduleSegment(file, startingFrame: lastPlaybackPosition, frameCount: frameCount, at: nil) { [weak self] in
                     self?.needsReschedule = true
@@ -230,11 +237,23 @@ class AudioProcessor {
                     return // Cannot play if engine fails to start
                 }
             }
+            pausedPosition = nil // Clear paused position on resume
             playerNode.play()
             isPlaying = true
             print("Playback started/resumed.")
         }
         updateNowPlayingInfo(isPaused: !isPlaying)
+    }
+    
+    /// Pauses playback explicitly.
+    func pause() {
+        if playerNode.isPlaying {
+            pausedPosition = getCurrentFramePosition() // Capture position before pausing
+            playerNode.pause()
+        }
+        isPlaying = false
+        print("Playback paused.")
+        updateNowPlayingInfo(isPaused: true)
     }
     
     /// Seeks to a specific time in the audio file.
@@ -254,6 +273,7 @@ class AudioProcessor {
         }
 
         lastPlaybackPosition = startingFrame
+        pausedPosition = startingFrame // Update paused position so UI shows correct time if paused
         needsReschedule = false
 
         playerNode.scheduleSegment(audioFile, startingFrame: startingFrame, frameCount: frameCount, at: nil) { [weak self] in
@@ -261,6 +281,7 @@ class AudioProcessor {
         }
 
         if wasPlaying {
+            pausedPosition = nil
             playerNode.play()
         }
         updateNowPlayingInfo(isPaused: !wasPlaying)
@@ -278,6 +299,9 @@ class AudioProcessor {
 
     /// Returns the current playback time in seconds.
     func getCurrentTime() -> Double {
+        if let paused = pausedPosition, !isPlaying {
+            return Double(paused) / audioSampleRate
+        }
         guard let position = getCurrentFramePosition() else { return Double(lastPlaybackPosition) / audioSampleRate }
         return Double(position) / audioSampleRate
     }
@@ -296,16 +320,46 @@ class AudioProcessor {
         // Add handler for Play Command
         commandCenter.playCommand.addTarget { [weak self] event in
             guard let self = self, !self.isCurrentlyPlaying() else { return .commandFailed }
-            self.togglePlayback()
-            self.onPlaybackStateChanged?()
+            // Execute synchronously on main thread to ensure state is updated before returning .success
+            if Thread.isMainThread {
+                self.togglePlayback()
+                self.onPlaybackStateChanged?()
+            } else {
+                DispatchQueue.main.sync {
+                    self.togglePlayback()
+                    self.onPlaybackStateChanged?()
+                }
+            }
             return .success
         }
 
         // Add handler for Pause Command
         commandCenter.pauseCommand.addTarget { [weak self] event in
             guard let self = self, self.isCurrentlyPlaying() else { return .commandFailed }
-            self.togglePlayback()
-            self.onPlaybackStateChanged?()
+            if Thread.isMainThread {
+                self.togglePlayback()
+                self.onPlaybackStateChanged?()
+            } else {
+                DispatchQueue.main.sync {
+                    self.togglePlayback()
+                    self.onPlaybackStateChanged?()
+                }
+            }
+            return .success
+        }
+        
+        // Add handler for Toggle Play/Pause Command
+        commandCenter.togglePlayPauseCommand.addTarget { [weak self] event in
+            guard let self = self else { return .commandFailed }
+            if Thread.isMainThread {
+                self.togglePlayback()
+                self.onPlaybackStateChanged?()
+            } else {
+                DispatchQueue.main.sync {
+                    self.togglePlayback()
+                    self.onPlaybackStateChanged?()
+                }
+            }
             return .success
         }
         
@@ -381,8 +435,8 @@ class AudioProcessor {
             print("Audio session interruption began.")
             // Pause playback if currently playing
             if isPlaying {
+                pausedPosition = getCurrentFramePosition()
                 playerNode.pause()
-                lastPlaybackPosition = getCurrentFramePosition() ?? lastPlaybackPosition
                 isPlaying = false
                 updateNowPlayingInfo(isPaused: true)
                 onPlaybackStateChanged?() // Notify UI to update play/pause button
@@ -470,21 +524,32 @@ class AudioProcessor {
         
         // Stop playback to avoid issues with the engine state
         let wasPlaying = playerNode.isPlaying
-        if wasPlaying {
-            playerNode.pause()
-        }
+        playerNode.stop()
+        engine.stop()
 
         do {
             let maxFrames: AVAudioFrameCount = 4096
             try engine.enableManualRenderingMode(.offline, format: sourceFile.processingFormat, maximumFrameCount: maxFrames)
             
             // Create a temporary file URL for the output
-            // Saving as an uncompressed .caf file is more robust than encoding to .m4a.
-            let outputURL = FileManager.default.temporaryDirectory.appendingPathComponent("exported-\(UUID().uuidString).caf")
+            // Construct filename: [Song Name] [Speed] [Pitch] [Reverb].m4a
+            let name = self.currentTitle ?? "Exported"
+            let speed = String(format: "Speed %.2fx", timePitchNode.rate)
+            let pitch = String(format: "Pitch %dst", Int((timePitchNode.pitch / 100.0).rounded()))
+            let reverb = String(format: "Reverb %d%%", Int(reverbNode.wetDryMix.rounded()))
+            let safeName = name.replacingOccurrences(of: "/", with: "_")
+            let outputURL = FileManager.default.temporaryDirectory.appendingPathComponent("\(safeName) \(speed) \(pitch) \(reverb).m4a")
             
-            // Create the output file using the engine's uncompressed rendering format.
-            // This avoids any potential encoding errors.
-            let outputFile = try AVAudioFile(forWriting: outputURL, settings: engine.manualRenderingFormat.settings)
+            // Define AAC settings
+            let settings: [String: Any] = [
+                AVFormatIDKey: kAudioFormatMPEG4AAC,
+                AVSampleRateKey: sourceFile.processingFormat.sampleRate,
+                AVNumberOfChannelsKey: sourceFile.processingFormat.channelCount,
+                AVEncoderBitRateKey: 192000 // 192 kbps
+            ]
+            
+            // Create the output file using the AAC settings.
+            let outputFile = try AVAudioFile(forWriting: outputURL, settings: settings)
             
             // Schedule the entire source file for rendering
             playerNode.scheduleFile(sourceFile, at: nil, completionHandler: nil)
@@ -524,6 +589,10 @@ class AudioProcessor {
             playerNode.scheduleFile(sourceFile, at: nil) { [weak self] in
                 self?.needsReschedule = true
             }
+            
+            // Restart engine for future playback
+            try engine.start()
+            
             if wasPlaying {
                 playerNode.play()
             }
@@ -534,7 +603,15 @@ class AudioProcessor {
         } catch {
             // Ensure we clean up on error
             isExporting = false
+            engine.stop()
             engine.disableManualRenderingMode()
+            
+            // Attempt to restore engine state
+            try? engine.start()
+            playerNode.scheduleFile(sourceFile, at: nil) { [weak self] in
+                self?.needsReschedule = true
+            }
+            
             completion(.failure(error))
         }
     }
@@ -597,6 +674,9 @@ protocol SettingsViewControllerDelegate: AnyObject {
     func settingsViewController(_ controller: SettingsViewController, didChangeShowExportButtonState isEnabled: Bool)
     func settingsViewController(_ controller: SettingsViewController, didChangeShowEQState isEnabled: Bool)
     func settingsViewController(_ controller: SettingsViewController, didChangePlaylistModeState isEnabled: Bool)
+    func settingsViewController(_ controller: SettingsViewController, didChangeLoopingState isEnabled: Bool)
+    func settingsViewController(_ controller: SettingsViewController, didChangeRememberSettingsState isEnabled: Bool)
+    func settingsViewController(_ controller: SettingsViewController, didChangeAutoPlayNextState isEnabled: Bool)
 }
 
 /// A simple view controller to display app settings.
@@ -616,6 +696,9 @@ class SettingsViewController: UIViewController {
     var isEQEnabled: Bool = false
     var isAlbumArtVisible: Bool = true
     var isPlaylistModeEnabled: Bool = false
+    var isLoopingEnabled: Bool = false
+    var isRememberSettingsEnabled: Bool = false
+    var isAutoPlayNextEnabled: Bool = false
     private let impactFeedbackGenerator = UIImpactFeedbackGenerator(style: .light)
     
     private let scrollView = UIScrollView()
@@ -658,6 +741,16 @@ class SettingsViewController: UIViewController {
     
     private let playlistModeSwitch = UISwitch()
     private let playlistModeLabel = UILabel()
+    
+    private let loopingSwitch = UISwitch()
+    private let loopingLabel = UILabel()
+    
+    private let rememberSettingsSwitch = UISwitch()
+    private let rememberSettingsLabel = UILabel()
+    
+    private let autoPlayNextSwitch = UISwitch()
+    private let autoPlayNextLabel = UILabel()
+    private var autoPlayNextGroup: UIStackView!
     
     private var themeStack: UIStackView!
 
@@ -836,6 +929,40 @@ class SettingsViewController: UIViewController {
         let playlistModeGroup = UIStackView(arrangedSubviews: [playlistModeStack, playlistModeDescription])
         playlistModeGroup.axis = .vertical
         playlistModeGroup.spacing = 4
+        
+        // --- Auto-Play Next Setting ---
+        autoPlayNextLabel.text = "Auto-Play Next"
+        autoPlayNextSwitch.isOn = isAutoPlayNextEnabled
+        autoPlayNextSwitch.addTarget(self, action: #selector(autoPlayNextSwitchChanged), for: .valueChanged)
+        let autoPlayNextStack = UIStackView(arrangedSubviews: [autoPlayNextLabel, autoPlayNextSwitch])
+        autoPlayNextStack.spacing = 20
+        let autoPlayNextDescription = createDescriptionLabel(with: "Automatically plays the next song in the folder when the current one finishes.")
+        autoPlayNextGroup = UIStackView(arrangedSubviews: [autoPlayNextStack, autoPlayNextDescription])
+        autoPlayNextGroup.axis = .vertical
+        autoPlayNextGroup.spacing = 4
+        autoPlayNextGroup.isHidden = !isPlaylistModeEnabled
+        
+        // --- Repeat Song Setting ---
+        loopingLabel.text = "Repeat Song"
+        loopingSwitch.isOn = isLoopingEnabled
+        loopingSwitch.addTarget(self, action: #selector(loopingSwitchChanged), for: .valueChanged)
+        let loopingStack = UIStackView(arrangedSubviews: [loopingLabel, loopingSwitch])
+        loopingStack.spacing = 20
+        let loopingDescription = createDescriptionLabel(with: "Automatically restarts the song when it finishes.")
+        let loopingGroup = UIStackView(arrangedSubviews: [loopingStack, loopingDescription])
+        loopingGroup.axis = .vertical
+        loopingGroup.spacing = 4
+        
+        // --- Remember Settings Setting ---
+        rememberSettingsLabel.text = "Remember Settings"
+        rememberSettingsSwitch.isOn = isRememberSettingsEnabled
+        rememberSettingsSwitch.addTarget(self, action: #selector(rememberSettingsSwitchChanged), for: .valueChanged)
+        let rememberSettingsStack = UIStackView(arrangedSubviews: [rememberSettingsLabel, rememberSettingsSwitch])
+        rememberSettingsStack.spacing = 20
+        let rememberSettingsDescription = createDescriptionLabel(with: "Keeps the current pitch, speed, and reverb settings when loading a new song.")
+        let rememberSettingsGroup = UIStackView(arrangedSubviews: [rememberSettingsStack, rememberSettingsDescription])
+        rememberSettingsGroup.axis = .vertical
+        rememberSettingsGroup.spacing = 4
 
         // --- Main Settings Stack ---
         let settingsOptionsStack = UIStackView(arrangedSubviews: [
@@ -843,6 +970,9 @@ class SettingsViewController: UIViewController {
             dynamicThemeGroup,
             eqGroup,
             playlistModeGroup,
+            autoPlayNextGroup,
+            loopingGroup,
+            rememberSettingsGroup,
             reverbSliderGroup,
             resetSlidersOnTapGroup, // Corrected spacing
             albumArtGroup,
@@ -993,6 +1123,26 @@ class SettingsViewController: UIViewController {
     
     @objc private func playlistModeSwitchChanged(_ sender: UISwitch) {
         delegate?.settingsViewController(self, didChangePlaylistModeState: sender.isOn)
+        impactFeedbackGenerator.impactOccurred()
+        
+        // Toggle visibility of Auto-Play Next
+        UIView.animate(withDuration: 0.3) {
+            self.autoPlayNextGroup.isHidden = !sender.isOn
+        }
+    }
+    
+    @objc private func loopingSwitchChanged(_ sender: UISwitch) {
+        delegate?.settingsViewController(self, didChangeLoopingState: sender.isOn)
+        impactFeedbackGenerator.impactOccurred()
+    }
+    
+    @objc private func rememberSettingsSwitchChanged(_ sender: UISwitch) {
+        delegate?.settingsViewController(self, didChangeRememberSettingsState: sender.isOn)
+        impactFeedbackGenerator.impactOccurred()
+    }
+    
+    @objc private func autoPlayNextSwitchChanged(_ sender: UISwitch) {
+        delegate?.settingsViewController(self, didChangeAutoPlayNextState: sender.isOn)
         impactFeedbackGenerator.impactOccurred()
     }
 }
@@ -1290,6 +1440,9 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
     private var isAccurateSpeedEnabled = false
     private var lastSnappedPitchValue: Float = 0.0 // To track discrete pitch changes for haptics
     private var lastSnappedSpeedValue: Float = 1.0 // To track discrete speed changes for haptics
+    private var isLoopingEnabled = false
+    private var isRememberSettingsEnabled = false
+    private var isAutoPlayNextEnabled = false
     
     // Playlist state
     private var playlistURLs: [URL] = []
@@ -1302,6 +1455,9 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
     override func viewDidLoad() {
         self.isAccurateSpeedEnabled = UserDefaults.standard.bool(forKey: "isAccurateSpeedEnabled")
         self.isAccuratePitchEnabled = UserDefaults.standard.bool(forKey: "isAccuratePitchEnabled")
+        self.isLoopingEnabled = UserDefaults.standard.bool(forKey: "isLoopingEnabled")
+        self.isRememberSettingsEnabled = UserDefaults.standard.bool(forKey: "isRememberSettingsEnabled")
+        self.isAutoPlayNextEnabled = UserDefaults.standard.bool(forKey: "isAutoPlayNextEnabled")
         
         super.viewDidLoad()
         overrideUserInterfaceStyle = .dark // Lock the app in dark mode
@@ -1339,8 +1495,6 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         }
         audioProcessor.onNextTrack = { [weak self] in self?.playNextSong() }
         audioProcessor.onPreviousTrack = { [weak self] in self?.playPreviousSong() }
-        audioProcessor.onPlaybackStateChanged = { [weak self] in
-        }
     }
 
     private func setupUI() {
@@ -1427,7 +1581,7 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         playPauseButton.imageView?.contentMode = .scaleAspectFit
         playPauseButton.contentVerticalAlignment = .fill
         playPauseButton.contentHorizontalAlignment = .fill
-        playPauseButton.imageEdgeInsets = UIEdgeInsets(top: 15, left: 15, bottom: 15, right: 15) // Add some padding
+        playPauseButton.imageEdgeInsets = UIEdgeInsets(top: 10, left: 10, bottom: 10, right: 10) // Add some padding
 
         // Rewind 10s button
         rewindButton.setImage(UIImage(systemName: "gobackward.10"), for: .normal)
@@ -1468,9 +1622,8 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         // Horizontal stack for playback controls (rewind, play/pause, skip)
         let playbackControlsStack = UIStackView(arrangedSubviews: [previousTrackButton, rewindButton, playPauseButton, skipButton, nextTrackButton])
         playbackControlsStack.axis = .horizontal
-        playbackControlsStack.spacing = 20 // Adjust spacing as needed
         playbackControlsStack.alignment = .center
-        playbackControlsStack.distribution = .equalCentering // Distribute space evenly
+        playbackControlsStack.distribution = .equalSpacing // Distribute space evenly
 
         // Pitch Slider Setup (Pitch: -12 semitones to +12 semitones)
         pitchLabel.text = "Pitch (0 st)"
@@ -1675,14 +1828,20 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         
         // Constraints for the new playback control buttons
         playbackControlsStack.widthAnchor.constraint(equalTo: stackView.widthAnchor).isActive = true // Ensure the stack fills the width
-        playPauseButton.widthAnchor.constraint(equalToConstant: 80).isActive = true
-        playPauseButton.heightAnchor.constraint(equalToConstant: 80).isActive = true
-        rewindButton.widthAnchor.constraint(equalToConstant: 50).isActive = true
-        rewindButton.heightAnchor.constraint(equalToConstant: 50).isActive = true
-        previousTrackButton.widthAnchor.constraint(equalToConstant: 50).isActive = true
-        previousTrackButton.heightAnchor.constraint(equalToConstant: 50).isActive = true
-        skipButton.widthAnchor.constraint(equalToConstant: 50).isActive = true
-        skipButton.heightAnchor.constraint(equalToConstant: 50).isActive = true
+        
+        playPauseButton.widthAnchor.constraint(equalTo: playbackControlsStack.widthAnchor, multiplier: 0.22).isActive = true
+        playPauseButton.heightAnchor.constraint(equalTo: playPauseButton.widthAnchor).isActive = true
+        
+        let secondaryButtonMultiplier = 0.13
+        
+        rewindButton.widthAnchor.constraint(equalTo: playbackControlsStack.widthAnchor, multiplier: secondaryButtonMultiplier).isActive = true
+        rewindButton.heightAnchor.constraint(equalTo: rewindButton.widthAnchor).isActive = true
+        previousTrackButton.widthAnchor.constraint(equalTo: playbackControlsStack.widthAnchor, multiplier: secondaryButtonMultiplier).isActive = true
+        previousTrackButton.heightAnchor.constraint(equalTo: previousTrackButton.widthAnchor).isActive = true
+        skipButton.widthAnchor.constraint(equalTo: playbackControlsStack.widthAnchor, multiplier: secondaryButtonMultiplier).isActive = true
+        skipButton.heightAnchor.constraint(equalTo: skipButton.widthAnchor).isActive = true
+        nextTrackButton.widthAnchor.constraint(equalTo: playbackControlsStack.widthAnchor, multiplier: secondaryButtonMultiplier).isActive = true
+        nextTrackButton.heightAnchor.constraint(equalTo: nextTrackButton.widthAnchor).isActive = true
     }
     
     private func updateBackgroundAnimation() {
@@ -1733,7 +1892,9 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         artistNameLabel.isHidden = isHidden
         
         // Reset to initial values
-        resetSliders()
+        if isHidden || !isRememberSettingsEnabled {
+            resetSliders()
+        }
         
         playPauseButton.setImage(UIImage(systemName: "play.fill"), for: .normal)
     }
@@ -1809,6 +1970,42 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
     }
     
     private func loadSavedState() {
+        // Restore settings regardless of whether a file is loaded
+        let isPitchLinked = UserDefaults.standard.bool(forKey: "isPitchLinked")
+        settingsViewController(SettingsViewController(), didChangeLinkPitchState: isPitchLinked)
+        
+        let isDynamicBackgroundEnabled = UserDefaults.standard.bool(forKey: "isDynamicBackgroundEnabled")
+        let isAnimatedBackgroundEnabled = UserDefaults.standard.bool(forKey: "isAnimatedBackgroundEnabled", defaultValue: true)
+        let isDynamicThemeEnabled = UserDefaults.standard.bool(forKey: "isDynamicThemeEnabled")
+        let isReverbSliderEnabled = UserDefaults.standard.bool(forKey: "isReverbSliderEnabled")
+        let isResetSlidersOnTapEnabled = UserDefaults.standard.bool(forKey: "isResetSlidersOnTapEnabled")
+        let isTapArtworkToChangeSongEnabled = UserDefaults.standard.bool(forKey: "isTapArtworkToChangeSongEnabled")
+        let isAccuratePitchEnabled = UserDefaults.standard.bool(forKey: "isAccuratePitchEnabled")
+        let isAccurateSpeedEnabled = UserDefaults.standard.bool(forKey: "isAccurateSpeedEnabled")
+        let isExportButtonEnabled = UserDefaults.standard.bool(forKey: "isExportButtonEnabled", defaultValue: true)
+        let isEQEnabled = UserDefaults.standard.bool(forKey: "isEQEnabled")
+        let isAlbumArtVisible = UserDefaults.standard.bool(forKey: "isAlbumArtVisible", defaultValue: true)
+        let isPlaylistModeEnabled = UserDefaults.standard.bool(forKey: "isPlaylistModeEnabled")
+        let isLoopingEnabled = UserDefaults.standard.bool(forKey: "isLoopingEnabled")
+        let isRememberSettingsEnabled = UserDefaults.standard.bool(forKey: "isRememberSettingsEnabled")
+        let isAutoPlayNextEnabled = UserDefaults.standard.bool(forKey: "isAutoPlayNextEnabled")
+        
+        settingsViewController(SettingsViewController(), didChangeReverbSliderState: isReverbSliderEnabled)
+        settingsViewController(SettingsViewController(), didChangeAnimatedBackgroundState: isAnimatedBackgroundEnabled)
+        settingsViewController(SettingsViewController(), didChangeDynamicBackgroundState: isDynamicBackgroundEnabled)
+        settingsViewController(SettingsViewController(), didChangeDynamicThemeState: isDynamicThemeEnabled)
+        settingsViewController(SettingsViewController(), didChangeResetSlidersOnTapState: isResetSlidersOnTapEnabled)
+        settingsViewController(SettingsViewController(), didChangeTapArtworkToChangeSongState: isTapArtworkToChangeSongEnabled)
+        settingsViewController(SettingsViewController(), didChangePrecisePitchState: isAccuratePitchEnabled)
+        settingsViewController(SettingsViewController(), didChangeAccurateSpeedState: isAccurateSpeedEnabled)
+        settingsViewController(SettingsViewController(), didChangeShowExportButtonState: isExportButtonEnabled)
+        settingsViewController(SettingsViewController(), didChangeShowEQState: isEQEnabled)
+        settingsViewController(SettingsViewController(), didChangeShowAlbumArtState: isAlbumArtVisible)
+        settingsViewController(SettingsViewController(), didChangePlaylistModeState: isPlaylistModeEnabled)
+        settingsViewController(SettingsViewController(), didChangeLoopingState: isLoopingEnabled)
+        settingsViewController(SettingsViewController(), didChangeRememberSettingsState: isRememberSettingsEnabled)
+        settingsViewController(SettingsViewController(), didChangeAutoPlayNextState: isAutoPlayNextEnabled)
+        
         // Restore the last audio file
         // Restore the last audio file first, as it provides the artwork for dynamic theming.
         guard let bookmarkData = UserDefaults.standard.data(forKey: "lastAudioFileBookmark") else {
@@ -1828,36 +2025,6 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
                 print("Bookmark is stale, clearing saved state.")
                 clearState()
             } else {
-                // Now that the file is about to be loaded, restore the state of other settings.
-                let isPitchLinked = UserDefaults.standard.bool(forKey: "isPitchLinked")
-                settingsViewController(SettingsViewController(), didChangeLinkPitchState: isPitchLinked)
-                
-                let isDynamicBackgroundEnabled = UserDefaults.standard.bool(forKey: "isDynamicBackgroundEnabled")
-                let isAnimatedBackgroundEnabled = UserDefaults.standard.bool(forKey: "isAnimatedBackgroundEnabled", defaultValue: true)
-                let isDynamicThemeEnabled = UserDefaults.standard.bool(forKey: "isDynamicThemeEnabled")
-                let isReverbSliderEnabled = UserDefaults.standard.bool(forKey: "isReverbSliderEnabled")
-                let isResetSlidersOnTapEnabled = UserDefaults.standard.bool(forKey: "isResetSlidersOnTapEnabled")
-                let isTapArtworkToChangeSongEnabled = UserDefaults.standard.bool(forKey: "isTapArtworkToChangeSongEnabled")
-                let isAccuratePitchEnabled = UserDefaults.standard.bool(forKey: "isAccuratePitchEnabled")
-                let isAccurateSpeedEnabled = UserDefaults.standard.bool(forKey: "isAccurateSpeedEnabled")
-                let isExportButtonEnabled = UserDefaults.standard.bool(forKey: "isExportButtonEnabled", defaultValue: true)
-                let isEQEnabled = UserDefaults.standard.bool(forKey: "isEQEnabled")
-                let isAlbumArtVisible = UserDefaults.standard.bool(forKey: "isAlbumArtVisible", defaultValue: true)
-                let isPlaylistModeEnabled = UserDefaults.standard.bool(forKey: "isPlaylistModeEnabled")
-                
-                settingsViewController(SettingsViewController(), didChangeReverbSliderState: isReverbSliderEnabled)
-                settingsViewController(SettingsViewController(), didChangeAnimatedBackgroundState: isAnimatedBackgroundEnabled)
-                settingsViewController(SettingsViewController(), didChangeDynamicBackgroundState: isDynamicBackgroundEnabled)
-                settingsViewController(SettingsViewController(), didChangeDynamicThemeState: isDynamicThemeEnabled)
-                settingsViewController(SettingsViewController(), didChangeResetSlidersOnTapState: isResetSlidersOnTapEnabled)
-                settingsViewController(SettingsViewController(), didChangeTapArtworkToChangeSongState: isTapArtworkToChangeSongEnabled)
-                settingsViewController(SettingsViewController(), didChangePrecisePitchState: isAccuratePitchEnabled)
-                settingsViewController(SettingsViewController(), didChangeAccurateSpeedState: isAccurateSpeedEnabled)
-                settingsViewController(SettingsViewController(), didChangeShowExportButtonState: isExportButtonEnabled)
-                settingsViewController(SettingsViewController(), didChangeShowEQState: isEQEnabled)
-                settingsViewController(SettingsViewController(), didChangeShowAlbumArtState: isAlbumArtVisible)
-                settingsViewController(SettingsViewController(), didChangePlaylistModeState: isPlaylistModeEnabled)
-                
                 if isPlaylistModeEnabled {
                     loadPlaylistFromBookmarks()
                 }
@@ -1907,9 +2074,9 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
     @objc private func clearState() {
         audioProcessor.togglePlayback() // Stop playback if active
         
-        // Clear UserDefaults
-        let domain = Bundle.main.bundleIdentifier!
-        UserDefaults.standard.removePersistentDomain(forName: domain)
+        // Clear only file-related UserDefaults
+        UserDefaults.standard.removeObject(forKey: "lastAudioFileBookmark")
+        UserDefaults.standard.removeObject(forKey: "lastPlaybackPosition")
         UserDefaults.standard.synchronize()
         
         // Reset UI to initial state
@@ -1940,10 +2107,18 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         
         // If song finishes, update play button icon
         if currentTime >= duration {
-            audioProcessor.togglePlayback() // This will set isPlaying to false
-            playPauseButton.setImage(UIImage(systemName: "play.fill"), for: .normal)
-            progressSlider.value = 0 // Reset slider to beginning
-            currentTimeLabel.text = formatTime(seconds: 0)
+            if isLoopingEnabled {
+                audioProcessor.seek(to: 0)
+                progressSlider.value = 0
+                currentTimeLabel.text = formatTime(seconds: 0)
+            } else if UserDefaults.standard.bool(forKey: "isPlaylistModeEnabled") && isAutoPlayNextEnabled {
+                playNextSong()
+            } else {
+                audioProcessor.pause()
+                playPauseButton.setImage(UIImage(systemName: "play.fill"), for: .normal)
+                progressSlider.value = 0 // Reset slider to beginning
+                currentTimeLabel.text = formatTime(seconds: 0)
+            }
         }
     }
     
@@ -2018,13 +2193,17 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         settingsVC.isEQEnabled = UserDefaults.standard.bool(forKey: "isEQEnabled")
         settingsVC.isAlbumArtVisible = UserDefaults.standard.bool(forKey: "isAlbumArtVisible", defaultValue: true)
         settingsVC.isPlaylistModeEnabled = UserDefaults.standard.bool(forKey: "isPlaylistModeEnabled")
+        settingsVC.isLoopingEnabled = self.isLoopingEnabled
+        settingsVC.isRememberSettingsEnabled = self.isRememberSettingsEnabled
+        settingsVC.isAutoPlayNextEnabled = self.isAutoPlayNextEnabled
         
         // Embed the SettingsViewController in a UINavigationController to display a navigation bar
         let navController = UINavigationController(rootViewController: settingsVC)
         
         // Present as a sheet
         if let sheet = navController.sheetPresentationController {
-            sheet.detents = [.medium()]
+            sheet.detents = [.medium(), .large()]
+            sheet.prefersGrabberVisible = true
             impactFeedbackGenerator.impactOccurred()
         }
         present(navController, animated: true)
@@ -2119,6 +2298,21 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         }
         
         updatePlaylistControls(isPlaylistMode: isEnabled)
+    }
+    
+    func settingsViewController(_ controller: SettingsViewController, didChangeLoopingState isEnabled: Bool) {
+        self.isLoopingEnabled = isEnabled
+        UserDefaults.standard.set(isEnabled, forKey: "isLoopingEnabled")
+    }
+    
+    func settingsViewController(_ controller: SettingsViewController, didChangeRememberSettingsState isEnabled: Bool) {
+        self.isRememberSettingsEnabled = isEnabled
+        UserDefaults.standard.set(isEnabled, forKey: "isRememberSettingsEnabled")
+    }
+    
+    func settingsViewController(_ controller: SettingsViewController, didChangeAutoPlayNextState isEnabled: Bool) {
+        self.isAutoPlayNextEnabled = isEnabled
+        UserDefaults.standard.set(isEnabled, forKey: "isAutoPlayNextEnabled")
     }
     
     /// Stops playback and resets the UI to the "No File Loaded" state.
@@ -2361,7 +2555,7 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         if isPlaylistMode {
             supportedTypes = [.folder]
         } else {
-            supportedTypes = [.mp3]
+            supportedTypes = [.mp3, .mpeg4Audio]
         }
         
         // Use 'asCopy: true' to ensure the file is copied into the app's sandbox
@@ -2407,13 +2601,18 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         
         do {
             let contents = try FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: nil, options: .skipsHiddenFiles)
-            let mp3Files = contents.filter { $0.pathExtension.lowercased() == "mp3" }.sorted { $0.lastPathComponent < $1.lastPathComponent }
+            let allowedExtensions = ["mp3", "m4a"]
+            let audioFiles = contents.filter { allowedExtensions.contains($0.pathExtension.lowercased()) }.sorted { $0.lastPathComponent < $1.lastPathComponent }
             
-            for fileURL in mp3Files {
+            for fileURL in audioFiles {
                 // We need to get a bookmark for each individual file to have persistent access
                 let bookmarkData = try fileURL.bookmarkData(options: .minimalBookmark, includingResourceValuesForKeys: nil, relativeTo: nil)
                 bookmarkDataArray.append(bookmarkData)
-                fileURLs.append(fileURL)
+                
+                // Resolve the bookmark immediately to get a security-scoped URL that can be accessed independently later
+                var isStale = false
+                let resolvedURL = try URL(resolvingBookmarkData: bookmarkData, options: .withoutUI, relativeTo: nil, bookmarkDataIsStale: &isStale)
+                fileURLs.append(resolvedURL)
             }
             
             self.playlistURLs = fileURLs
@@ -2686,7 +2885,10 @@ struct AudioEffectsApp: App {
             "isExportButtonEnabled": true,
             "isEQEnabled": false,
             "isPlaylistModeEnabled": false,
-            "isAlbumArtVisible": true
+            "isAlbumArtVisible": true,
+            "isLoopingEnabled": false,
+            "isRememberSettingsEnabled": false,
+            "isAutoPlayNextEnabled": false
         ])
     }
     var body: some Scene {

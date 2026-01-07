@@ -10,6 +10,7 @@
 		451F836A2EAA676B00F72198 /* slowedandreverb.xcodeproj */ = {isa = PBXFileReference; lastKnownFileType = "wrapper.pb-project"; path = slowedandreverb.xcodeproj; sourceTree = "<group>"; };
 		4525C39A2EACF8FF00667FE0 /* slowedandreverb.xcodeproj */ = {isa = PBXFileReference; lastKnownFileType = "wrapper.pb-project"; path = slowedandreverb.xcodeproj; sourceTree = "<group>"; };
 		4525C3AB2EACF9EC00667FE0 /* slowedandreverb.xcodeproj */ = {isa = PBXFileReference; lastKnownFileType = "wrapper.pb-project"; path = slowedandreverb.xcodeproj; sourceTree = "<group>"; };
+		45E896C02F04E9EB0036CB34 /* slowedandreverb.xcodeproj */ = {isa = PBXFileReference; lastKnownFileType = "wrapper.pb-project"; path = slowedandreverb.xcodeproj; sourceTree = "<group>"; };
 		45EC836D2EA8ACFA00A85E48 /* slowedandreverb.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = slowedandreverb.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -56,6 +57,11 @@
 			sourceTree = "<group>";
 		};
 		4525C3AE2EACF9EC00667FE0 /* Products */ = {
+			isa = PBXGroup;
+			name = Products;
+			sourceTree = "<group>";
+		};
+		45E896C32F04E9EB0036CB34 /* Products */ = {
 			isa = PBXGroup;
 			name = Products;
 			sourceTree = "<group>";
@@ -140,6 +146,10 @@
 				{
 					ProductGroup = 4525C3AE2EACF9EC00667FE0 /* Products */;
 					ProjectRef = 4525C3AB2EACF9EC00667FE0 /* slowedandreverb.xcodeproj */;
+				},
+				{
+					ProductGroup = 45E896C32F04E9EB0036CB34 /* Products */;
+					ProjectRef = 45E896C02F04E9EB0036CB34 /* slowedandreverb.xcodeproj */;
 				},
 			);
 			projectRoot = "";
@@ -309,7 +319,7 @@
 				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphoneos*]" = UIStatusBarStyleDefault;
 				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphonesimulator*]" = UIStatusBarStyleDefault;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
-				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.6;
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
@@ -353,7 +363,7 @@
 				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphoneos*]" = UIStatusBarStyleDefault;
 				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphonesimulator*]" = UIStatusBarStyleDefault;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
-				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.6;
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
