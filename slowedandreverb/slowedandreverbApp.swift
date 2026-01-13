@@ -19,6 +19,8 @@ class AudioProcessor {
     private let engine = AVAudioEngine()
     private let playerNode = AVAudioPlayerNode()
     private let timePitchNode = AVAudioUnitTimePitch() // Controls playback speed (rate) and pitch
+    private let varispeedNode = AVAudioUnitVarispeed() // High quality speed/pitch linking
+    private var isVarispeedEnabled = false
     private let reverbNode = AVAudioUnitReverb()       // Applies environmental effects
     private let equalizerNode = AVAudioUnitEQ(numberOfBands: 3) // For Bass, Mids, Treble
     private var isPitchCorrectionEnabled = true
@@ -71,17 +73,13 @@ class AudioProcessor {
         setupRemoteTransportControls()
         engine.attach(playerNode)
         engine.attach(timePitchNode)
+        engine.attach(varispeedNode)
         engine.attach(equalizerNode)
         engine.attach(reverbNode)
 
         // The audio format for the connection points must be consistent.
-        // We'll derive it from the output of the player node once a file is loaded.
-        // For now, we connect with a placeholder format and will reconnect later.
         let commonFormat = engine.mainMixerNode.outputFormat(forBus: 0)
-
-        engine.connect(playerNode, to: timePitchNode, format: commonFormat)
-        engine.connect(timePitchNode, to: reverbNode, format: commonFormat)
-        engine.connect(reverbNode, to: engine.mainMixerNode, format: commonFormat)
+        connectNodes(format: commonFormat)
 
         // Initial setup for effects
         reverbNode.loadFactoryPreset(.mediumHall)
@@ -113,6 +111,23 @@ class AudioProcessor {
         }
     }
     
+    /// Connects the audio nodes based on the current mode (TimePitch or Varispeed).
+    private func connectNodes(format: AVAudioFormat) {
+        // Disconnect inputs to ensure clean reconfiguration
+        engine.disconnectNodeInput(equalizerNode)
+        
+        if isVarispeedEnabled {
+            engine.connect(playerNode, to: varispeedNode, format: format)
+            engine.connect(varispeedNode, to: equalizerNode, format: format)
+        } else {
+            engine.connect(playerNode, to: timePitchNode, format: format)
+            engine.connect(timePitchNode, to: equalizerNode, format: format)
+        }
+        
+        engine.connect(equalizerNode, to: reverbNode, format: format)
+        engine.connect(reverbNode, to: engine.mainMixerNode, format: format)
+    }
+    
     // MARK: File Loading and Playback
 
     /// Loads an audio file and extracts its metadata.
@@ -134,10 +149,7 @@ class AudioProcessor {
             // Reconnect nodes with the audio file's processing format to ensure effects work correctly.
             let fileFormat = file.processingFormat
             // New chain: Player -> Time/Pitch -> EQ -> Reverb -> Output
-            engine.connect(playerNode, to: timePitchNode, format: fileFormat) // Player -> Time/Pitch
-            engine.connect(timePitchNode, to: equalizerNode, format: fileFormat) // Time/Pitch -> EQ
-            engine.connect(equalizerNode, to: reverbNode, format: fileFormat) // EQ -> Reverb
-            engine.connect(reverbNode, to: engine.mainMixerNode, format: fileFormat)
+            connectNodes(format: fileFormat)
             
             // Extract metadata (title and artwork)
             let asset = AVAsset(url: url)
@@ -203,6 +215,13 @@ class AudioProcessor {
             isPlaying = false
             print("Playback paused.")
         } else {
+            // Activate audio session to ensure playback can resume (especially for Bluetooth/Control Center)
+            do {
+                try AVAudioSession.sharedInstance().setActive(true)
+            } catch {
+                print("Failed to activate audio session: \(error.localizedDescription)")
+            }
+
             // If the file finished playing, we need to stop, reschedule, and then play.
             if needsReschedule {
                 playerNode.stop()
@@ -317,9 +336,16 @@ class AudioProcessor {
     private func setupRemoteTransportControls() {
         let commandCenter = MPRemoteCommandCenter.shared()
 
+        // Enable commands explicitly
+        commandCenter.playCommand.isEnabled = true
+        commandCenter.pauseCommand.isEnabled = true
+        commandCenter.togglePlayPauseCommand.isEnabled = true
+
         // Add handler for Play Command
         commandCenter.playCommand.addTarget { [weak self] event in
-            guard let self = self, !self.isCurrentlyPlaying() else { return .commandFailed }
+            guard let self = self else { return .commandFailed }
+            if self.isCurrentlyPlaying() { return .success }
+            
             // Execute synchronously on main thread to ensure state is updated before returning .success
             if Thread.isMainThread {
                 self.togglePlayback()
@@ -335,7 +361,9 @@ class AudioProcessor {
 
         // Add handler for Pause Command
         commandCenter.pauseCommand.addTarget { [weak self] event in
-            guard let self = self, self.isCurrentlyPlaying() else { return .commandFailed }
+            guard let self = self else { return .commandFailed }
+            if !self.isCurrentlyPlaying() { return .success }
+            
             if Thread.isMainThread {
                 self.togglePlayback()
                 self.onPlaybackStateChanged?()
@@ -398,7 +426,7 @@ class AudioProcessor {
         
         // Update only the dynamic properties: elapsed time and playback rate.
         info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = getCurrentTime()
-        info[MPNowPlayingInfoPropertyPlaybackRate] = isPaused ? 0.0 : timePitchNode.rate
+        info[MPNowPlayingInfoPropertyPlaybackRate] = isPaused ? 0.0 : (isVarispeedEnabled ? varispeedNode.rate : timePitchNode.rate)
 
         // Set the updated information.
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
@@ -464,13 +492,48 @@ class AudioProcessor {
     /// Adjusts the song's playback rate (speed/tempo).
     /// - Parameter rate: The new playback rate (0.5 to 2.0).
     func setPlaybackRate(rate: Float, linkedPitch: Float?) {
-        timePitchNode.rate = rate
-        
-        // If a linked pitch value is provided, use it.
-        // Otherwise, use the existing pitch value to maintain separation.
-        if let pitch = linkedPitch {
-            timePitchNode.pitch = pitch
+        if isVarispeedEnabled {
+            varispeedNode.rate = rate
+        } else {
+            timePitchNode.rate = rate
+            // If a linked pitch value is provided, use it.
+            if let pitch = linkedPitch {
+                timePitchNode.pitch = pitch
+            }
         }
+        updateNowPlayingInfo(isPaused: !isPlaying)
+    }
+    
+    /// Enables or disables Varispeed mode (High Quality Link Pitch & Speed).
+    func setVarispeedEnabled(_ enabled: Bool) {
+        guard isVarispeedEnabled != enabled else { return }
+        isVarispeedEnabled = enabled
+        
+        // Stop playback and reset engine
+        playerNode.stop()
+        engine.stop()
+        isPlaying = false
+        
+        if let file = audioFile {
+            connectNodes(format: file.processingFormat)
+            // Reschedule the file
+            playerNode.scheduleFile(file, at: nil) { [weak self] in
+                self?.needsReschedule = true
+            }
+        } else {
+            let commonFormat = engine.mainMixerNode.outputFormat(forBus: 0)
+            connectNodes(format: commonFormat)
+        }
+        
+        do {
+            try engine.start()
+        } catch {
+            print("Error restarting AVAudioEngine: \(error.localizedDescription)")
+        }
+        
+        lastPlaybackPosition = 0
+        pausedPosition = nil
+        updateNowPlayingInfo(isPaused: true)
     }
     
     /// Adjusts the song's pitch.
@@ -479,7 +542,9 @@ class AudioProcessor {
         // When pitch correction is on, changing the pitch slider should not
         // be affected by the rate's automatic pitch shift. The `pitch` property
         // is an independent adjustment.
-        timePitchNode.pitch = pitch
+        if !isVarispeedEnabled {
+            timePitchNode.pitch = pitch
+        }
     }
     
     /// Adjusts the amount of reverb applied to the song.
@@ -536,13 +601,18 @@ class AudioProcessor {
             let name = self.currentTitle ?? "Exported"
             var filenameComponents = [name]
             
-            if abs(timePitchNode.rate - 1.0) > 0.01 {
-                filenameComponents.append(String(format: "Speed %.2fx", timePitchNode.rate))
+            let currentRate = isVarispeedEnabled ? varispeedNode.rate : timePitchNode.rate
+            if abs(currentRate - 1.0) > 0.01 {
+                filenameComponents.append(String(format: "Speed %.2fx", currentRate))
             }
             
-            let pitchSemitones = Int((timePitchNode.pitch / 100.0).rounded())
-            if pitchSemitones != 0 {
-                filenameComponents.append(String(format: "Pitch %dst", pitchSemitones))
+            if !isVarispeedEnabled {
+                let pitchSemitones = Int((timePitchNode.pitch / 100.0).rounded())
+                if pitchSemitones != 0 {
+                    filenameComponents.append(String(format: "Pitch %dst", pitchSemitones))
+                }
+            } else {
+                filenameComponents.append("HQ")
             }
             
             let reverbAmount = Int(reverbNode.wetDryMix.rounded())
@@ -1079,8 +1149,17 @@ class SettingsViewController: UIViewController {
     }
 
     @objc private func linkPitchSwitchChanged(_ sender: UISwitch) {
-        delegate?.settingsViewController(self, didChangeLinkPitchState: sender.isOn)
-        impactFeedbackGenerator.impactOccurred()
+        let alert = UIAlertController(title: "Change Audio Engine", message: "Changing this setting requires restarting the audio engine. Playback will stop and reset to the beginning.", preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel, handler: { _ in
+            sender.setOn(!sender.isOn, animated: true)
+        }))
+        alert.addAction(UIAlertAction(title: "Continue", style: .destructive, handler: { [weak self] _ in
+            guard let self = self else { return }
+            self.delegate?.settingsViewController(self, didChangeLinkPitchState: sender.isOn)
+            self.impactFeedbackGenerator.impactOccurred()
+        }))
+        
+        present(alert, animated: true)
     }
     
     @objc private func dynamicBackgroundSwitchChanged(_ sender: UISwitch) {
@@ -1419,6 +1498,7 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
     
     private let pitchLabel = UILabel()
     private let pitchSlider = UISlider()
+    private var pitchControlStack: UIStackView!
     
     private let speedLabel = UILabel()
     private let speedSlider = UISlider()
@@ -1695,7 +1775,7 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         
         // 6. Reset Button Setup (replaces File Picker button)
         // Group the effect sliders with their labels for consistent spacing
-        let pitchControlStack = UIStackView(arrangedSubviews: [pitchLabel, pitchSlider])
+        pitchControlStack = UIStackView(arrangedSubviews: [pitchLabel, pitchSlider])
         pitchControlStack.axis = .vertical
         pitchControlStack.spacing = 8
         let speedControlStack = UIStackView(arrangedSubviews: [speedLabel, speedSlider])
@@ -2121,7 +2201,6 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         
         progressSlider.value = Float(currentTime)
         currentTimeLabel.text = formatTime(seconds: currentTime)
-        audioProcessor.updateNowPlayingInfo(isPaused: false) // Update elapsed time
         
         // If song finishes, update play button icon
         if currentTime >= duration {
@@ -2231,9 +2310,13 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
     // MARK: SettingsViewControllerDelegate
     
     func settingsViewController(_ controller: SettingsViewController, didChangeLinkPitchState isEnabled: Bool) {
-        pitchSlider.isEnabled = !isEnabled
         UserDefaults.standard.set(isEnabled, forKey: "isPitchLinked")
+        pitchControlStack.isHidden = isEnabled
+        audioProcessor.setVarispeedEnabled(isEnabled)
         speedSliderChanged(speedSlider) // Re-apply speed/pitch logic
+        updatePlayPauseButtonState()
+        progressSlider.value = 0
+        currentTimeLabel.text = formatTime(seconds: 0)
     }
     
     func settingsViewController(_ controller: SettingsViewController, didChangeDynamicBackgroundState isEnabled: Bool) {
@@ -2526,12 +2609,12 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
 
         speedLabel.text = String(format: "Speed (%.2fx)", finalRate) // Display the potentially snapped value
         
-        // Check if the pitch slider is disabled, which means linking is ON
-        if !pitchSlider.isEnabled {
-            // Calculate pitch from the raw (continuous) rate for smooth linking
-            let pitchInCents = 1200 * log2(rawRate)
-            audioProcessor.setPlaybackRate(rate: finalRate, linkedPitch: pitchInCents)
-            pitchSlider.value = pitchInCents // This will trigger pitchSliderChanged
+        // Check if pitch control is hidden (linked pitch is ON)
+        if pitchControlStack.isHidden {
+            // When using Varispeed, we just set the rate. The engine handles the pitch linking.
+            // We pass nil for linkedPitch because Varispeed doesn't use the TimePitch node's pitch property.
+            audioProcessor.setPlaybackRate(rate: finalRate, linkedPitch: nil)
+            // We don't update pitchSlider.value here because it's hidden and irrelevant in Varispeed mode.
         } else {
             audioProcessor.setPlaybackRate(rate: finalRate, linkedPitch: nil)
         }
