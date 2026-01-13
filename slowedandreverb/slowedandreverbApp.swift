@@ -202,66 +202,53 @@ class AudioProcessor {
         }
     }
     
+    /// Resumes playback explicitly.
+    func play() {
+        guard audioFile != nil else { return }
+        if isPlaying { return }
+
+        // Activate audio session to ensure playback can resume
+        do {
+            try AVAudioSession.sharedInstance().setActive(true)
+        } catch {
+            print("Failed to activate audio session: \(error.localizedDescription)")
+        }
+
+        // If the file finished playing, we need to stop, reschedule, and then play.
+        if needsReschedule {
+            playerNode.stop()
+            if !engine.isRunning {
+                try? engine.start()
+            }
+            guard let file = audioFile else { return }
+            lastPlaybackPosition = 0
+            pausedPosition = nil
+            let frameCount = AVAudioFrameCount(audioFileLength - lastPlaybackPosition)
+            playerNode.scheduleSegment(file, startingFrame: lastPlaybackPosition, frameCount: frameCount, at: nil) { [weak self] in
+                self?.needsReschedule = true
+            }
+            needsReschedule = false
+        }
+
+        // Ensure the engine is running
+        if !engine.isRunning {
+            try? engine.start()
+        }
+
+        pausedPosition = nil
+        playerNode.play()
+        isPlaying = true
+        print("Playback started/resumed.")
+        updateNowPlayingInfo(isPaused: false)
+    }
+
     /// Starts or stops the playback and handles file rescheduling for looping.
     func togglePlayback() {
-        guard audioFile != nil else {
-            print("No audio file loaded.")
-            return
-        }
-
         if isPlaying {
-            pausedPosition = getCurrentFramePosition() // Capture position before pausing
-            playerNode.pause()
-            isPlaying = false
-            print("Playback paused.")
+            pause()
         } else {
-            // Activate audio session to ensure playback can resume (especially for Bluetooth/Control Center)
-            do {
-                try AVAudioSession.sharedInstance().setActive(true)
-            } catch {
-                print("Failed to activate audio session: \(error.localizedDescription)")
-            }
-
-            // If the file finished playing, we need to stop, reschedule, and then play.
-            if needsReschedule {
-                playerNode.stop()
-                // Ensure the engine is running before attempting to play after rescheduling
-                if !engine.isRunning {
-                    do {
-                        try engine.start()
-                        print("AVAudioEngine restarted for playback after reschedule.")
-                    } catch {
-                        print("Error restarting AVAudioEngine for reschedule: \(error.localizedDescription)")
-                        return // Cannot play if engine fails to start
-                    }
-                }
-                guard let file = audioFile else { return }
-                // When re-scheduling after finishing, start from the beginning
-                lastPlaybackPosition = 0
-                pausedPosition = nil
-                let frameCount = AVAudioFrameCount(audioFileLength - lastPlaybackPosition)
-                playerNode.scheduleSegment(file, startingFrame: lastPlaybackPosition, frameCount: frameCount, at: nil) { [weak self] in
-                    self?.needsReschedule = true
-                }
-
-                needsReschedule = false
-            }
-            // Ensure the engine is running before attempting to play/resume
-            if !engine.isRunning {
-                do {
-                    try engine.start()
-                    print("AVAudioEngine restarted for playback.")
-                } catch {
-                    print("Error restarting AVAudioEngine: \(error.localizedDescription)")
-                    return // Cannot play if engine fails to start
-                }
-            }
-            pausedPosition = nil // Clear paused position on resume
-            playerNode.play()
-            isPlaying = true
-            print("Playback started/resumed.")
+            play()
         }
-        updateNowPlayingInfo(isPaused: !isPlaying)
     }
     
     /// Pauses playback explicitly.
@@ -344,17 +331,9 @@ class AudioProcessor {
         // Add handler for Play Command
         commandCenter.playCommand.addTarget { [weak self] event in
             guard let self = self else { return .commandFailed }
-            if self.isCurrentlyPlaying() { return .success }
-            
-            // Execute synchronously on main thread to ensure state is updated before returning .success
-            if Thread.isMainThread {
-                self.togglePlayback()
+            DispatchQueue.main.async {
+                self.play()
                 self.onPlaybackStateChanged?()
-            } else {
-                DispatchQueue.main.sync {
-                    self.togglePlayback()
-                    self.onPlaybackStateChanged?()
-                }
             }
             return .success
         }
@@ -362,16 +341,9 @@ class AudioProcessor {
         // Add handler for Pause Command
         commandCenter.pauseCommand.addTarget { [weak self] event in
             guard let self = self else { return .commandFailed }
-            if !self.isCurrentlyPlaying() { return .success }
-            
-            if Thread.isMainThread {
-                self.togglePlayback()
+            DispatchQueue.main.async {
+                self.pause()
                 self.onPlaybackStateChanged?()
-            } else {
-                DispatchQueue.main.sync {
-                    self.togglePlayback()
-                    self.onPlaybackStateChanged?()
-                }
             }
             return .success
         }
@@ -379,14 +351,9 @@ class AudioProcessor {
         // Add handler for Toggle Play/Pause Command
         commandCenter.togglePlayPauseCommand.addTarget { [weak self] event in
             guard let self = self else { return .commandFailed }
-            if Thread.isMainThread {
+            DispatchQueue.main.async {
                 self.togglePlayback()
                 self.onPlaybackStateChanged?()
-            } else {
-                DispatchQueue.main.sync {
-                    self.togglePlayback()
-                    self.onPlaybackStateChanged?()
-                }
             }
             return .success
         }
@@ -765,6 +732,7 @@ protocol SettingsViewControllerDelegate: AnyObject {
     func settingsViewController(_ controller: SettingsViewController, didChangeLoopingState isEnabled: Bool)
     func settingsViewController(_ controller: SettingsViewController, didChangeRememberSettingsState isEnabled: Bool)
     func settingsViewController(_ controller: SettingsViewController, didChangeAutoPlayNextState isEnabled: Bool)
+    func settingsViewController(_ controller: SettingsViewController, didChangeStepperState isEnabled: Bool)
 }
 
 /// A simple view controller to display app settings.
@@ -787,6 +755,7 @@ class SettingsViewController: UIViewController {
     var isLoopingEnabled: Bool = false
     var isRememberSettingsEnabled: Bool = false
     var isAutoPlayNextEnabled: Bool = false
+    var isStepperEnabled: Bool = false
     private let impactFeedbackGenerator = UIImpactFeedbackGenerator(style: .light)
     
     private let scrollView = UIScrollView()
@@ -840,6 +809,9 @@ class SettingsViewController: UIViewController {
     private let autoPlayNextLabel = UILabel()
     private var autoPlayNextGroup: UIStackView!
     
+    private let stepperSwitch = UISwitch()
+    private let stepperLabel = UILabel()
+    
     private var themeStack: UIStackView!
 
     override func viewDidLoad() {
@@ -872,6 +844,15 @@ class SettingsViewController: UIViewController {
             label.font = .systemFont(ofSize: 13)
             label.textColor = .secondaryLabel
             label.numberOfLines = 0
+            return label
+        }
+
+        // Helper to create header labels
+        func createHeaderLabel(with text: String) -> UILabel {
+            let label = UILabel()
+            label.text = text
+            label.font = .systemFont(ofSize: 18, weight: .bold)
+            label.textColor = .label
             return label
         }
 
@@ -1051,27 +1032,50 @@ class SettingsViewController: UIViewController {
         let rememberSettingsGroup = UIStackView(arrangedSubviews: [rememberSettingsStack, rememberSettingsDescription])
         rememberSettingsGroup.axis = .vertical
         rememberSettingsGroup.spacing = 4
+        
+        // --- Stepper Buttons Setting ---
+        stepperLabel.text = "Show Stepper Buttons"
+        stepperSwitch.isOn = isStepperEnabled
+        stepperSwitch.addTarget(self, action: #selector(stepperSwitchChanged), for: .valueChanged)
+        let stepperStack = UIStackView(arrangedSubviews: [stepperLabel, stepperSwitch])
+        stepperStack.spacing = 20
+        let stepperDescription = createDescriptionLabel(with: "Shows plus and minus buttons next to sliders for fine adjustments.")
+        let stepperGroup = UIStackView(arrangedSubviews: [stepperStack, stepperDescription])
+        stepperGroup.axis = .vertical
+        stepperGroup.spacing = 4
 
         // --- Main Settings Stack ---
         let settingsOptionsStack = UIStackView(arrangedSubviews: [
+            createHeaderLabel(with: "Modes"),
             linkPitchGroup,
-            dynamicThemeGroup,
-            eqGroup,
             playlistModeGroup,
+            
+            createHeaderLabel(with: "Playback"),
             autoPlayNextGroup,
             loopingGroup,
-            rememberSettingsGroup,
+            
+            createHeaderLabel(with: "Interface"),
             reverbSliderGroup,
-            resetSlidersOnTapGroup, // Corrected spacing
+            eqGroup,
+            stepperGroup,
+            tapArtworkGroup,
+            resetSlidersOnTapGroup,
+            exportButtonGroup,
+            
+            createHeaderLabel(with: "Accuracy"),
+            accuratePitchGroup,
+            preciseSpeedGroup,
+            
+            createHeaderLabel(with: "Theme"),
+            dynamicThemeGroup,
             albumArtGroup,
-            tapArtworkGroup
+            dynamicBackgroundGroup,
+            animatedBackgroundGroup,
+            
+            createHeaderLabel(with: "Extras"),
+            rememberSettingsGroup
         ])
-        settingsOptionsStack.axis = .vertical // Corrected spacing
-        settingsOptionsStack.addArrangedSubview(dynamicBackgroundGroup) // Re-added dynamic background
-        settingsOptionsStack.addArrangedSubview(animatedBackgroundGroup)
-        settingsOptionsStack.insertArrangedSubview(exportButtonGroup, at: 3)
-        settingsOptionsStack.insertArrangedSubview(preciseSpeedGroup, at: 5) // Insert precise speed after precise pitch
-        settingsOptionsStack.insertArrangedSubview(accuratePitchGroup, at: 2)
+        settingsOptionsStack.axis = .vertical
         settingsOptionsStack.spacing = 25
         settingsOptionsStack.translatesAutoresizingMaskIntoConstraints = false
         
@@ -1240,6 +1244,11 @@ class SettingsViewController: UIViewController {
     
     @objc private func autoPlayNextSwitchChanged(_ sender: UISwitch) {
         delegate?.settingsViewController(self, didChangeAutoPlayNextState: sender.isOn)
+        impactFeedbackGenerator.impactOccurred()
+    }
+    
+    @objc private func stepperSwitchChanged(_ sender: UISwitch) {
+        delegate?.settingsViewController(self, didChangeStepperState: sender.isOn)
         impactFeedbackGenerator.impactOccurred()
     }
 }
@@ -1516,6 +1525,20 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
     private let trebleLabel = UILabel()
     private let trebleSlider = UISlider()
     
+    // Stepper Buttons
+    private let pitchMinusButton = UIButton(type: .system)
+    private let pitchPlusButton = UIButton(type: .system)
+    private let speedMinusButton = UIButton(type: .system)
+    private let speedPlusButton = UIButton(type: .system)
+    private let reverbMinusButton = UIButton(type: .system)
+    private let reverbPlusButton = UIButton(type: .system)
+    private let bassMinusButton = UIButton(type: .system)
+    private let bassPlusButton = UIButton(type: .system)
+    private let midsMinusButton = UIButton(type: .system)
+    private let midsPlusButton = UIButton(type: .system)
+    private let trebleMinusButton = UIButton(type: .system)
+    private let treblePlusButton = UIButton(type: .system)
+    
     private let resetButton = UIButton(type: .system)
     private let exportButton = UIButton(type: .system)
     
@@ -1541,6 +1564,7 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
     private var isLoopingEnabled = false
     private var isRememberSettingsEnabled = false
     private var isAutoPlayNextEnabled = false
+    private var isStepperEnabled = false
     
     // Playlist state
     private var playlistURLs: [URL] = []
@@ -1556,6 +1580,7 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         self.isLoopingEnabled = UserDefaults.standard.bool(forKey: "isLoopingEnabled")
         self.isRememberSettingsEnabled = UserDefaults.standard.bool(forKey: "isRememberSettingsEnabled")
         self.isAutoPlayNextEnabled = UserDefaults.standard.bool(forKey: "isAutoPlayNextEnabled")
+        self.isStepperEnabled = UserDefaults.standard.bool(forKey: "isStepperEnabled")
         
         super.viewDidLoad()
         overrideUserInterfaceStyle = .dark // Lock the app in dark mode
@@ -1775,24 +1800,29 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         
         // 6. Reset Button Setup (replaces File Picker button)
         // Group the effect sliders with their labels for consistent spacing
-        pitchControlStack = UIStackView(arrangedSubviews: [pitchLabel, pitchSlider])
-        pitchControlStack.axis = .vertical
-        pitchControlStack.spacing = 8
-        let speedControlStack = UIStackView(arrangedSubviews: [speedLabel, speedSlider])
-        speedControlStack.axis = .vertical
-        speedControlStack.spacing = 8
-        let reverbControlStack = UIStackView(arrangedSubviews: [reverbLabel, reverbSlider])
-        reverbControlStack.axis = .vertical
-        reverbControlStack.spacing = 8
-        let bassControlStack = UIStackView(arrangedSubviews: [bassLabel, bassSlider])
-        bassControlStack.axis = .vertical
-        bassControlStack.spacing = 8
-        let midsControlStack = UIStackView(arrangedSubviews: [midsLabel, midsSlider])
-        midsControlStack.axis = .vertical
-        midsControlStack.spacing = 8
-        let trebleControlStack = UIStackView(arrangedSubviews: [trebleLabel, trebleSlider])
-        trebleControlStack.axis = .vertical
-        trebleControlStack.spacing = 8
+        setupStepperButton(pitchMinusButton, imageName: "minus", action: #selector(decrementPitch))
+        setupStepperButton(pitchPlusButton, imageName: "plus", action: #selector(incrementPitch))
+        pitchControlStack = createControlStack(label: pitchLabel, slider: pitchSlider, minusButton: pitchMinusButton, plusButton: pitchPlusButton)
+        
+        setupStepperButton(speedMinusButton, imageName: "minus", action: #selector(decrementSpeed))
+        setupStepperButton(speedPlusButton, imageName: "plus", action: #selector(incrementSpeed))
+        let speedControlStack = createControlStack(label: speedLabel, slider: speedSlider, minusButton: speedMinusButton, plusButton: speedPlusButton)
+        
+        setupStepperButton(reverbMinusButton, imageName: "minus", action: #selector(decrementReverb))
+        setupStepperButton(reverbPlusButton, imageName: "plus", action: #selector(incrementReverb))
+        let reverbControlStack = createControlStack(label: reverbLabel, slider: reverbSlider, minusButton: reverbMinusButton, plusButton: reverbPlusButton)
+        
+        setupStepperButton(bassMinusButton, imageName: "minus", action: #selector(decrementBass))
+        setupStepperButton(bassPlusButton, imageName: "plus", action: #selector(incrementBass))
+        let bassControlStack = createControlStack(label: bassLabel, slider: bassSlider, minusButton: bassMinusButton, plusButton: bassPlusButton)
+        
+        setupStepperButton(midsMinusButton, imageName: "minus", action: #selector(decrementMids))
+        setupStepperButton(midsPlusButton, imageName: "plus", action: #selector(incrementMids))
+        let midsControlStack = createControlStack(label: midsLabel, slider: midsSlider, minusButton: midsMinusButton, plusButton: midsPlusButton)
+        
+        setupStepperButton(trebleMinusButton, imageName: "minus", action: #selector(decrementTreble))
+        setupStepperButton(treblePlusButton, imageName: "plus", action: #selector(incrementTreble))
+        let trebleControlStack = createControlStack(label: trebleLabel, slider: trebleSlider, minusButton: trebleMinusButton, plusButton: treblePlusButton)
         
         var resetButtonConfig = UIButton.Configuration.filled()
         resetButtonConfig.title = "Reset"
@@ -1919,7 +1949,6 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
             albumArtImageView.widthAnchor.constraint(equalTo: stackView.widthAnchor, multiplier: 0.7), // 70% width
             
             // Make sliders and button take up more width
-            speedSlider.widthAnchor.constraint(equalTo: stackView.widthAnchor),
             progressStack.widthAnchor.constraint(equalTo: stackView.widthAnchor),
             actionButtonsStack.widthAnchor.constraint(equalTo: stackView.widthAnchor)
         ])
@@ -1940,6 +1969,25 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         skipButton.heightAnchor.constraint(equalTo: skipButton.widthAnchor).isActive = true
         nextTrackButton.widthAnchor.constraint(equalTo: playbackControlsStack.widthAnchor, multiplier: secondaryButtonMultiplier).isActive = true
         nextTrackButton.heightAnchor.constraint(equalTo: nextTrackButton.widthAnchor).isActive = true
+    }
+    
+    private func setupStepperButton(_ button: UIButton, imageName: String, action: Selector) {
+        button.setImage(UIImage(systemName: imageName), for: .normal)
+        button.addTarget(self, action: action, for: .touchUpInside)
+        button.widthAnchor.constraint(equalToConstant: 30).isActive = true
+        button.heightAnchor.constraint(equalToConstant: 30).isActive = true
+    }
+    
+    private func createControlStack(label: UILabel, slider: UISlider, minusButton: UIButton, plusButton: UIButton) -> UIStackView {
+        let hStack = UIStackView(arrangedSubviews: [minusButton, slider, plusButton])
+        hStack.axis = .horizontal
+        hStack.spacing = 10
+        hStack.alignment = .center
+        
+        let vStack = UIStackView(arrangedSubviews: [label, hStack])
+        vStack.axis = .vertical
+        vStack.spacing = 8
+        return vStack
     }
     
     private func updateBackgroundAnimation() {
@@ -1984,6 +2032,9 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         midsSlider.isHidden = isHidden
         trebleLabel.isHidden = isHidden
         trebleSlider.isHidden = isHidden
+        
+        // Handle stepper visibility based on global hidden state, user preference, and individual slider visibility
+        updateStepperVisibility()
 
         // When controls are being hidden, also hide the artist label.
         // When controls are shown, its visibility will be determined by `loadAudioFile`.
@@ -1995,6 +2046,34 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         }
         
         playPauseButton.setImage(UIImage(systemName: "play.fill"), for: .normal)
+    }
+    
+    private func updateStepperVisibility() {
+        // If global stepper setting is off, or no song is loaded (playPauseButton is hidden), hide all.
+        guard isStepperEnabled, !playPauseButton.isHidden else {
+            [pitchMinusButton, pitchPlusButton, speedMinusButton, speedPlusButton,
+             reverbMinusButton, reverbPlusButton, bassMinusButton, bassPlusButton,
+             midsMinusButton, midsPlusButton, trebleMinusButton, treblePlusButton]
+                .forEach { $0.isHidden = true }
+            return
+        }
+
+        // Pitch and Speed are always visible when file is loaded
+        pitchMinusButton.isHidden = false
+        pitchPlusButton.isHidden = false
+        speedMinusButton.isHidden = false
+        speedPlusButton.isHidden = false
+
+        // Reverb
+        let isReverbOn = UserDefaults.standard.bool(forKey: "isReverbSliderEnabled")
+        reverbMinusButton.isHidden = !isReverbOn
+        reverbPlusButton.isHidden = !isReverbOn
+
+        // EQ
+        let isEQOn = UserDefaults.standard.bool(forKey: "isEQEnabled")
+        [bassMinusButton, bassPlusButton,
+         midsMinusButton, midsPlusButton,
+         trebleMinusButton, treblePlusButton].forEach { $0.isHidden = !isEQOn }
     }
     
     /// Resets only the effect sliders to their default values.
@@ -2087,6 +2166,7 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         let isLoopingEnabled = UserDefaults.standard.bool(forKey: "isLoopingEnabled")
         let isRememberSettingsEnabled = UserDefaults.standard.bool(forKey: "isRememberSettingsEnabled")
         let isAutoPlayNextEnabled = UserDefaults.standard.bool(forKey: "isAutoPlayNextEnabled")
+        let isStepperEnabled = UserDefaults.standard.bool(forKey: "isStepperEnabled")
         
         settingsViewController(SettingsViewController(), didChangeReverbSliderState: isReverbSliderEnabled)
         settingsViewController(SettingsViewController(), didChangeAnimatedBackgroundState: isAnimatedBackgroundEnabled)
@@ -2103,6 +2183,7 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         settingsViewController(SettingsViewController(), didChangeLoopingState: isLoopingEnabled)
         settingsViewController(SettingsViewController(), didChangeRememberSettingsState: isRememberSettingsEnabled)
         settingsViewController(SettingsViewController(), didChangeAutoPlayNextState: isAutoPlayNextEnabled)
+        settingsViewController(SettingsViewController(), didChangeStepperState: isStepperEnabled)
         
         // Restore the last audio file
         // Restore the last audio file first, as it provides the artwork for dynamic theming.
@@ -2278,7 +2359,7 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         let settingsVC = SettingsViewController()
         settingsVC.delegate = self
         settingsVC.currentTheme = ThemeManager.shared.currentTheme
-        settingsVC.isPitchLinked = !pitchSlider.isEnabled // Pass current state
+        settingsVC.isPitchLinked = UserDefaults.standard.bool(forKey: "isPitchLinked")
         settingsVC.isAnimatedBackgroundEnabled = UserDefaults.standard.bool(forKey: "isAnimatedBackgroundEnabled", defaultValue: true)
         settingsVC.isDynamicBackgroundEnabled = UserDefaults.standard.bool(forKey: "isDynamicBackgroundEnabled")
         settingsVC.isDynamicThemeEnabled = UserDefaults.standard.bool(forKey: "isDynamicThemeEnabled")
@@ -2294,6 +2375,7 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         settingsVC.isLoopingEnabled = self.isLoopingEnabled
         settingsVC.isRememberSettingsEnabled = self.isRememberSettingsEnabled
         settingsVC.isAutoPlayNextEnabled = self.isAutoPlayNextEnabled
+        settingsVC.isStepperEnabled = self.isStepperEnabled
         
         // Embed the SettingsViewController in a UINavigationController to display a navigation bar
         let navController = UINavigationController(rootViewController: settingsVC)
@@ -2341,6 +2423,7 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         UserDefaults.standard.set(isEnabled, forKey: "isReverbSliderEnabled")
         reverbLabel.isHidden = !isEnabled
         reverbSlider.isHidden = !isEnabled
+        updateStepperVisibility()
     }
     
     func settingsViewController(_ controller: SettingsViewController, didChangeResetSlidersOnTapState isEnabled: Bool) {
@@ -2374,6 +2457,7 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         UserDefaults.standard.set(isEnabled, forKey: "isEQEnabled")
         let views = [bassLabel, bassSlider, midsLabel, midsSlider, trebleLabel, trebleSlider]
         views.forEach { $0.isHidden = !isEnabled }
+        updateStepperVisibility()
         // Re-apply reverb slider visibility based on user settings
     }
     
@@ -2415,6 +2499,12 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
     func settingsViewController(_ controller: SettingsViewController, didChangeAutoPlayNextState isEnabled: Bool) {
         self.isAutoPlayNextEnabled = isEnabled
         UserDefaults.standard.set(isEnabled, forKey: "isAutoPlayNextEnabled")
+    }
+    
+    func settingsViewController(_ controller: SettingsViewController, didChangeStepperState isEnabled: Bool) {
+        self.isStepperEnabled = isEnabled
+        UserDefaults.standard.set(isEnabled, forKey: "isStepperEnabled")
+        updateStepperVisibility()
     }
     
     /// Stops playback and resets the UI to the "No File Loaded" state.
@@ -2646,6 +2736,98 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         audioProcessor.setTrebleGain(gain: gain)
         UserDefaults.standard.set(gain, forKey: "trebleValue")
         trebleLabel.text = String(format: "Treble (%.1f dB)", gain)
+    }
+    
+    // MARK: - Stepper Actions
+    
+    @objc private func incrementPitch() {
+        let step: Float = isAccuratePitchEnabled ? 100 : 10
+        let newValue = min(pitchSlider.maximumValue, pitchSlider.value + step)
+        pitchSlider.setValue(newValue, animated: true)
+        pitchSliderChanged(pitchSlider)
+        impactFeedbackGenerator.impactOccurred()
+    }
+    
+    @objc private func decrementPitch() {
+        let step: Float = isAccuratePitchEnabled ? 100 : 10
+        let newValue = max(pitchSlider.minimumValue, pitchSlider.value - step)
+        pitchSlider.setValue(newValue, animated: true)
+        pitchSliderChanged(pitchSlider)
+        impactFeedbackGenerator.impactOccurred()
+    }
+    
+    @objc private func incrementSpeed() {
+        let step: Float = isAccurateSpeedEnabled ? 0.05 : 0.01
+        let newValue = min(speedSlider.maximumValue, speedSlider.value + step)
+        speedSlider.setValue(newValue, animated: true)
+        speedSliderChanged(speedSlider)
+        impactFeedbackGenerator.impactOccurred()
+    }
+    
+    @objc private func decrementSpeed() {
+        let step: Float = isAccurateSpeedEnabled ? 0.05 : 0.01
+        let newValue = max(speedSlider.minimumValue, speedSlider.value - step)
+        speedSlider.setValue(newValue, animated: true)
+        speedSliderChanged(speedSlider)
+        impactFeedbackGenerator.impactOccurred()
+    }
+    
+    @objc private func incrementReverb() {
+        let step: Float = 5.0
+        let newValue = min(reverbSlider.maximumValue, reverbSlider.value + step)
+        reverbSlider.setValue(newValue, animated: true)
+        reverbSliderChanged(reverbSlider)
+        impactFeedbackGenerator.impactOccurred()
+    }
+    
+    @objc private func decrementReverb() {
+        let step: Float = 5.0
+        let newValue = max(reverbSlider.minimumValue, reverbSlider.value - step)
+        reverbSlider.setValue(newValue, animated: true)
+        reverbSliderChanged(reverbSlider)
+        impactFeedbackGenerator.impactOccurred()
+    }
+    
+    @objc private func incrementBass() {
+        let newValue = min(bassSlider.maximumValue, bassSlider.value + 1)
+        bassSlider.setValue(newValue, animated: true)
+        bassSliderChanged(bassSlider)
+        impactFeedbackGenerator.impactOccurred()
+    }
+    
+    @objc private func decrementBass() {
+        let newValue = max(bassSlider.minimumValue, bassSlider.value - 1)
+        bassSlider.setValue(newValue, animated: true)
+        bassSliderChanged(bassSlider)
+        impactFeedbackGenerator.impactOccurred()
+    }
+    
+    @objc private func incrementMids() {
+        let newValue = min(midsSlider.maximumValue, midsSlider.value + 1)
+        midsSlider.setValue(newValue, animated: true)
+        midsSliderChanged(midsSlider)
+        impactFeedbackGenerator.impactOccurred()
+    }
+    
+    @objc private func decrementMids() {
+        let newValue = max(midsSlider.minimumValue, midsSlider.value - 1)
+        midsSlider.setValue(newValue, animated: true)
+        midsSliderChanged(midsSlider)
+        impactFeedbackGenerator.impactOccurred()
+    }
+    
+    @objc private func incrementTreble() {
+        let newValue = min(trebleSlider.maximumValue, trebleSlider.value + 1)
+        trebleSlider.setValue(newValue, animated: true)
+        trebleSliderChanged(trebleSlider)
+        impactFeedbackGenerator.impactOccurred()
+    }
+    
+    @objc private func decrementTreble() {
+        let newValue = max(trebleSlider.minimumValue, trebleSlider.value - 1)
+        trebleSlider.setValue(newValue, animated: true)
+        trebleSliderChanged(trebleSlider)
+        impactFeedbackGenerator.impactOccurred()
     }
 
     // MARK: File Picker Logic
@@ -3045,7 +3227,8 @@ struct AudioEffectsApp: App {
             "isAlbumArtVisible": true,
             "isLoopingEnabled": false,
             "isRememberSettingsEnabled": false,
-            "isAutoPlayNextEnabled": false
+            "isAutoPlayNextEnabled": false,
+            "isStepperEnabled": false
         ])
     }
     var body: some Scene {
