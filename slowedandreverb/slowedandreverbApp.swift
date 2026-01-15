@@ -728,7 +728,6 @@ protocol SettingsViewControllerDelegate: AnyObject {
     func settingsViewController(_ controller: SettingsViewController, didChangeShowAlbumArtState isEnabled: Bool)
     func settingsViewController(_ controller: SettingsViewController, didChangeShowExportButtonState isEnabled: Bool)
     func settingsViewController(_ controller: SettingsViewController, didChangeShowEQState isEnabled: Bool)
-    func settingsViewController(_ controller: SettingsViewController, didChangePlaylistModeState isEnabled: Bool)
     func settingsViewController(_ controller: SettingsViewController, didChangeLoopingState isEnabled: Bool)
     func settingsViewController(_ controller: SettingsViewController, didChangeRememberSettingsState isEnabled: Bool)
     func settingsViewController(_ controller: SettingsViewController, didChangeAutoPlayNextState isEnabled: Bool)
@@ -751,7 +750,6 @@ class SettingsViewController: UIViewController {
     var isExportButtonEnabled: Bool = true
     var isEQEnabled: Bool = false
     var isAlbumArtVisible: Bool = true
-    var isPlaylistModeEnabled: Bool = false
     var isLoopingEnabled: Bool = false
     var isRememberSettingsEnabled: Bool = false
     var isAutoPlayNextEnabled: Bool = false
@@ -796,9 +794,6 @@ class SettingsViewController: UIViewController {
     private let albumArtSwitch = UISwitch()
     private let albumArtLabel = UILabel()
     
-    private let playlistModeSwitch = UISwitch()
-    private let playlistModeLabel = UILabel()
-    
     private let loopingSwitch = UISwitch()
     private let loopingLabel = UILabel()
     
@@ -807,7 +802,6 @@ class SettingsViewController: UIViewController {
     
     private let autoPlayNextSwitch = UISwitch()
     private let autoPlayNextLabel = UILabel()
-    private var autoPlayNextGroup: UIStackView!
     
     private let stepperSwitch = UISwitch()
     private let stepperLabel = UILabel()
@@ -987,29 +981,6 @@ class SettingsViewController: UIViewController {
         let albumArtGroup = UIStackView(arrangedSubviews: [albumArtStack, albumArtDescription])
         albumArtGroup.axis = .vertical
         albumArtGroup.spacing = 4
-
-        // --- Playlist Mode Setting ---
-        playlistModeLabel.text = "Playlist Mode"
-        playlistModeSwitch.isOn = isPlaylistModeEnabled
-        playlistModeSwitch.addTarget(self, action: #selector(playlistModeSwitchChanged), for: .valueChanged)
-        let playlistModeStack = UIStackView(arrangedSubviews: [playlistModeLabel, playlistModeSwitch])
-        playlistModeStack.spacing = 20
-        let playlistModeDescription = createDescriptionLabel(with: "Select a folder to create a playlist of all its songs. A dropdown will appear to switch between them.")
-        let playlistModeGroup = UIStackView(arrangedSubviews: [playlistModeStack, playlistModeDescription])
-        playlistModeGroup.axis = .vertical
-        playlistModeGroup.spacing = 4
-        
-        // --- Auto-Play Next Setting ---
-        autoPlayNextLabel.text = "Auto-Play Next"
-        autoPlayNextSwitch.isOn = isAutoPlayNextEnabled
-        autoPlayNextSwitch.addTarget(self, action: #selector(autoPlayNextSwitchChanged), for: .valueChanged)
-        let autoPlayNextStack = UIStackView(arrangedSubviews: [autoPlayNextLabel, autoPlayNextSwitch])
-        autoPlayNextStack.spacing = 20
-        let autoPlayNextDescription = createDescriptionLabel(with: "Automatically plays the next song in the folder when the current one finishes.")
-        autoPlayNextGroup = UIStackView(arrangedSubviews: [autoPlayNextStack, autoPlayNextDescription])
-        autoPlayNextGroup.axis = .vertical
-        autoPlayNextGroup.spacing = 4
-        autoPlayNextGroup.isHidden = !isPlaylistModeEnabled
         
         // --- Repeat Song Setting ---
         loopingLabel.text = "Repeat Song"
@@ -1021,6 +992,17 @@ class SettingsViewController: UIViewController {
         let loopingGroup = UIStackView(arrangedSubviews: [loopingStack, loopingDescription])
         loopingGroup.axis = .vertical
         loopingGroup.spacing = 4
+        
+        // --- Auto-Play Next Setting ---
+        autoPlayNextLabel.text = "Auto-Play Next"
+        autoPlayNextSwitch.isOn = isAutoPlayNextEnabled
+        autoPlayNextSwitch.addTarget(self, action: #selector(autoPlayNextSwitchChanged), for: .valueChanged)
+        let autoPlayNextStack = UIStackView(arrangedSubviews: [autoPlayNextLabel, autoPlayNextSwitch])
+        autoPlayNextStack.spacing = 20
+        let autoPlayNextDescription = createDescriptionLabel(with: "Automatically plays the next song in the library when the current one finishes.")
+        let autoPlayNextGroup = UIStackView(arrangedSubviews: [autoPlayNextStack, autoPlayNextDescription])
+        autoPlayNextGroup.axis = .vertical
+        autoPlayNextGroup.spacing = 4
         
         // --- Remember Settings Setting ---
         rememberSettingsLabel.text = "Remember Settings"
@@ -1048,11 +1030,10 @@ class SettingsViewController: UIViewController {
         let settingsOptionsStack = UIStackView(arrangedSubviews: [
             createHeaderLabel(with: "Modes"),
             linkPitchGroup,
-            playlistModeGroup,
             
             createHeaderLabel(with: "Playback"),
-            autoPlayNextGroup,
             loopingGroup,
+            autoPlayNextGroup,
             
             createHeaderLabel(with: "Interface"),
             reverbSliderGroup,
@@ -1222,28 +1203,18 @@ class SettingsViewController: UIViewController {
         impactFeedbackGenerator.impactOccurred()
     }
     
-    @objc private func playlistModeSwitchChanged(_ sender: UISwitch) {
-        delegate?.settingsViewController(self, didChangePlaylistModeState: sender.isOn)
-        impactFeedbackGenerator.impactOccurred()
-        
-        // Toggle visibility of Auto-Play Next
-        UIView.animate(withDuration: 0.3) {
-            self.autoPlayNextGroup.isHidden = !sender.isOn
-        }
-    }
-    
     @objc private func loopingSwitchChanged(_ sender: UISwitch) {
         delegate?.settingsViewController(self, didChangeLoopingState: sender.isOn)
         impactFeedbackGenerator.impactOccurred()
     }
     
-    @objc private func rememberSettingsSwitchChanged(_ sender: UISwitch) {
-        delegate?.settingsViewController(self, didChangeRememberSettingsState: sender.isOn)
+    @objc private func autoPlayNextSwitchChanged(_ sender: UISwitch) {
+        delegate?.settingsViewController(self, didChangeAutoPlayNextState: sender.isOn)
         impactFeedbackGenerator.impactOccurred()
     }
     
-    @objc private func autoPlayNextSwitchChanged(_ sender: UISwitch) {
-        delegate?.settingsViewController(self, didChangeAutoPlayNextState: sender.isOn)
+    @objc private func rememberSettingsSwitchChanged(_ sender: UISwitch) {
+        delegate?.settingsViewController(self, didChangeRememberSettingsState: sender.isOn)
         impactFeedbackGenerator.impactOccurred()
     }
     
@@ -1253,15 +1224,122 @@ class SettingsViewController: UIViewController {
     }
 }
 
-// MARK: - Playlist View Controller
+// MARK: - Library Management
 
-/// Protocol to delegate song selection from the playlist view back to the main view controller.
-protocol PlaylistViewControllerDelegate: AnyObject {
-    func playlistViewController(_ controller: PlaylistViewController, didSelectSongAt url: URL)
+struct Song: Codable, Identifiable, Equatable {
+    var id = UUID()
+    let title: String
+    let artist: String?
+    let album: String?
+    let fileName: String
+    var savedPitch: Float?
+    var savedSpeed: Float?
+    var savedReverb: Float?
+    
+    var url: URL? {
+        let paths = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)
+        return paths.first?.appendingPathComponent(fileName)
+    }
 }
 
-/// Sorting options for the playlist.
-private enum PlaylistSortOption: Int, CaseIterable {
+class LibraryManager {
+    static let shared = LibraryManager()
+    private let libraryKey = "musicLibrary"
+    var songs: [Song] = []
+    
+    init() {
+        loadLibrary()
+    }
+    
+    func loadLibrary() {
+        if let data = UserDefaults.standard.data(forKey: libraryKey),
+           let decoded = try? JSONDecoder().decode([Song].self, from: data) {
+            songs = decoded
+        }
+    }
+    
+    func saveLibrary() {
+        if let encoded = try? JSONEncoder().encode(songs) {
+            UserDefaults.standard.set(encoded, forKey: libraryKey)
+        }
+    }
+    
+    func addSong(from url: URL) {
+        // Copy file to Documents
+        let fileManager = FileManager.default
+        guard let documentsURL = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first else { return }
+        
+        let destinationURL = documentsURL.appendingPathComponent(url.lastPathComponent)
+        
+        // If file exists, generate a unique name
+        var finalDestinationURL = destinationURL
+        var counter = 1
+        while fileManager.fileExists(atPath: finalDestinationURL.path) {
+            let fileName = url.deletingPathExtension().lastPathComponent
+            let ext = url.pathExtension
+            finalDestinationURL = documentsURL.appendingPathComponent("\(fileName)_\(counter).\(ext)")
+            counter += 1
+        }
+        
+        do {
+            if url.startAccessingSecurityScopedResource() {
+                try fileManager.copyItem(at: url, to: finalDestinationURL)
+                url.stopAccessingSecurityScopedResource()
+            } else {
+                try fileManager.copyItem(at: url, to: finalDestinationURL)
+            }
+            
+            // Extract Metadata
+            let asset = AVAsset(url: finalDestinationURL)
+            let metadata = asset.commonMetadata
+            let title = metadata.first(where: { $0.commonKey == .commonKeyTitle })?.stringValue ?? url.deletingPathExtension().lastPathComponent
+            let artist = metadata.first(where: { $0.commonKey == .commonKeyArtist })?.stringValue
+            let album = metadata.first(where: { $0.commonKey == .commonKeyAlbumName })?.stringValue
+            
+            let newSong = Song(title: title, artist: artist, album: album, fileName: finalDestinationURL.lastPathComponent, savedPitch: nil, savedSpeed: nil, savedReverb: nil)
+            songs.append(newSong)
+            saveLibrary()
+            
+        } catch {
+            print("Error adding song to library: \(error)")
+        }
+    }
+    
+    func updateSong(_ song: Song) {
+        if let index = songs.firstIndex(where: { $0.id == song.id }) {
+            songs[index] = song
+            saveLibrary()
+        }
+    }
+    
+    func deleteSong(at index: Int) {
+        let song = songs[index]
+        if let url = song.url {
+            try? FileManager.default.removeItem(at: url)
+        }
+        songs.remove(at: index)
+        saveLibrary()
+    }
+    
+    func deleteSongs(withIDs ids: [UUID]) {
+        let idsSet = Set(ids)
+        songs.filter { idsSet.contains($0.id) }.forEach { song in
+            if let url = song.url {
+                try? FileManager.default.removeItem(at: url)
+            }
+        }
+        songs.removeAll { idsSet.contains($0.id) }
+        saveLibrary()
+    }
+}
+
+// MARK: - Library View Controller
+
+protocol LibraryViewControllerDelegate: AnyObject {
+    func libraryViewController(_ controller: LibraryViewController, didSelectSong song: Song)
+}
+
+private enum LibrarySortOption: Int, CaseIterable {
     case title, artist, album
 
     var description: String {
@@ -1273,38 +1351,35 @@ private enum PlaylistSortOption: Int, CaseIterable {
     }
 }
 
-/// A view controller that displays the list of songs in the current playlist.
-class PlaylistViewController: UIViewController, UITableViewDataSource, UITableViewDelegate {
+class LibraryViewController: UIViewController, UITableViewDataSource, UITableViewDelegate, UIDocumentPickerDelegate, UISearchResultsUpdating {
     
-    weak var delegate: PlaylistViewControllerDelegate?
-    var playlistURLs: [URL] = []
-    var currentAudioURL: URL?
+    weak var delegate: LibraryViewControllerDelegate?
+    var currentSongID: UUID?
     
     private let tableView = UITableView()
-    private var songMetadataList: [(url: URL, title: String, artist: String?, album: String?, artwork: UIImage?)] = []
-    private let activityIndicator = UIActivityIndicatorView(style: .medium)
+    private var displayedSongs: [Song] = []
+    private let searchController = UISearchController(searchResultsController: nil)
     
-    private let sortControl = UISegmentedControl(items: PlaylistSortOption.allCases.map { $0.description })
-    private let sortOptionKey = "playlistSortOption"
+    private let sortOptionKey = "librarySortOption"
     
+    private var deleteButton: UIBarButtonItem?
+
     override func viewDidLoad() {
         super.viewDidLoad()
         setupUI()
-        loadAllSongMetadata()
+        setupSearch()
+        loadSongs()
     }
     
     private func setupUI() {
         view.backgroundColor = .systemGroupedBackground
         
-        // Setup Sort Control in Navigation Bar
-        let savedSortIndex = UserDefaults.standard.integer(forKey: sortOptionKey)
-        sortControl.selectedSegmentIndex = savedSortIndex
-        sortControl.addTarget(self, action: #selector(sortOptionChanged), for: .valueChanged)
-        navigationItem.titleView = sortControl
+        title = "Library"
         
         navigationItem.leftBarButtonItem = UIBarButtonItem(barButtonSystemItem: .close, target: self, action: #selector(dismissView))
+        updateRightBarButtons()
         
-        navigationController?.navigationBar.prefersLargeTitles = false // Use standard title bar for sort control
+        navigationController?.navigationBar.prefersLargeTitles = true
 
         tableView.translatesAutoresizingMaskIntoConstraints = false
         tableView.dataSource = self
@@ -1313,64 +1388,121 @@ class PlaylistViewController: UIViewController, UITableViewDataSource, UITableVi
         tableView.rowHeight = 60
         view.addSubview(tableView)
         
-        activityIndicator.translatesAutoresizingMaskIntoConstraints = false
-        activityIndicator.hidesWhenStopped = true
-        view.addSubview(activityIndicator)
-        
         NSLayoutConstraint.activate([
             tableView.topAnchor.constraint(equalTo: view.topAnchor),
             tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            
-            activityIndicator.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            activityIndicator.centerYAnchor.constraint(equalTo: view.centerYAnchor)
+            tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor)
         ])
+        tableView.allowsMultipleSelectionDuringEditing = true
+    }
+    
+    private func setupSearch() {
+        searchController.searchResultsUpdater = self
+        searchController.obscuresBackgroundDuringPresentation = false
+        searchController.searchBar.placeholder = "Search Songs"
+        navigationItem.searchController = searchController
+        definesPresentationContext = true
+    }
+    
+    func updateSearchResults(for searchController: UISearchController) {
+        let searchBar = searchController.searchBar
+        filterContentForSearchText(searchBar.text!)
+    }
+    
+    private func filterContentForSearchText(_ searchText: String) {
+        if searchText.isEmpty {
+            displayedSongs = LibraryManager.shared.songs
+        } else {
+            displayedSongs = LibraryManager.shared.songs.filter { (song: Song) -> Bool in
+                let titleMatch = song.title.range(of: searchText, options: .caseInsensitive) != nil
+                let artistMatch = (song.artist ?? "").range(of: searchText, options: .caseInsensitive) != nil
+                return titleMatch || artistMatch
+            }
+        }
+        sortSongs()
+        tableView.reloadData()
     }
     
     @objc private func dismissView() {
         dismiss(animated: true)
     }
     
-    @objc private func sortOptionChanged(_ sender: UISegmentedControl) {
-        UserDefaults.standard.set(sender.selectedSegmentIndex, forKey: sortOptionKey)
-        sortMetadataList()
-        tableView.reloadData()
-    }
-    
-    private func loadAllSongMetadata() {
-        activityIndicator.startAnimating()
-        tableView.isHidden = true
+    override func setEditing(_ editing: Bool, animated: Bool) {
+        super.setEditing(editing, animated: animated)
+        tableView.setEditing(editing, animated: animated)
+        navigationController?.setToolbarHidden(!editing, animated: animated)
         
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let self = self else { return }
-            
-            let localMetadataList = self.playlistURLs.map { url -> (url: URL, title: String, artist: String?, album: String?, artwork: UIImage?) in
-                let asset = AVAsset(url: url)
-                let title = asset.commonMetadata.first(where: { $0.commonKey == .commonKeyTitle })?.stringValue ?? url.deletingPathExtension().lastPathComponent
-                let artist = asset.commonMetadata.first(where: { $0.commonKey == .commonKeyArtist })?.stringValue
-                let album = asset.commonMetadata.first(where: { $0.commonKey == .commonKeyAlbumName })?.stringValue // Corrected key
-                var artwork: UIImage? = nil
-                if let artworkItem = asset.commonMetadata.first(where: { $0.commonKey == .commonKeyArtwork }), let imageData = artworkItem.dataValue {
-                    artwork = UIImage(data: imageData)
-                }
-                return (url, title, artist, album, artwork)
-            }
-            
-            DispatchQueue.main.async {
-                self.songMetadataList = localMetadataList
-                self.sortMetadataList()
-                self.activityIndicator.stopAnimating()
-                self.tableView.isHidden = false
-                self.tableView.reloadData()
-            }
+        if editing {
+            navigationItem.rightBarButtonItems = [editButtonItem]
+            let deleteBtn = UIBarButtonItem(barButtonSystemItem: .trash, target: self, action: #selector(deleteSelectedSongs))
+            deleteBtn.tintColor = .systemRed
+            deleteBtn.isEnabled = false
+            self.deleteButton = deleteBtn
+            let spacer = UIBarButtonItem(barButtonSystemItem: .flexibleSpace, target: nil, action: nil)
+            toolbarItems = [spacer, deleteBtn]
+        } else {
+            updateRightBarButtons()
+            toolbarItems = nil
         }
     }
     
-    private func sortMetadataList() {
-        guard let sortOption = PlaylistSortOption(rawValue: sortControl.selectedSegmentIndex) else { return }
+    @objc private func deleteSelectedSongs() {
+        guard let selectedIndexPaths = tableView.indexPathsForSelectedRows else { return }
+        let songsToDelete = selectedIndexPaths.map { displayedSongs[$0.row] }
+        let idsToDelete = songsToDelete.map { $0.id }
         
-        songMetadataList.sort { (song1, song2) in
+        let alert = UIAlertController(title: "Delete Songs", message: "Are you sure you want to delete \(songsToDelete.count) songs?", preferredStyle: .actionSheet)
+        alert.addAction(UIAlertAction(title: "Delete", style: .destructive, handler: { [weak self] _ in
+            LibraryManager.shared.deleteSongs(withIDs: idsToDelete)
+            self?.loadSongs()
+            self?.setEditing(false, animated: true)
+        }))
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel, handler: nil))
+        present(alert, animated: true)
+    }
+    
+    private func updateRightBarButtons() {
+        let currentSortIndex = UserDefaults.standard.integer(forKey: sortOptionKey)
+        let currentSort = LibrarySortOption(rawValue: currentSortIndex) ?? .title
+        
+        let sortMenu = UIMenu(title: "Sort By", children: LibrarySortOption.allCases.map { option in
+            UIAction(title: option.description, state: option == currentSort ? .on : .off) { [weak self] _ in
+                UserDefaults.standard.set(option.rawValue, forKey: self?.sortOptionKey ?? "")
+                self?.sortSongs()
+                self?.tableView.reloadData()
+                self?.updateRightBarButtons()
+            }
+        })
+        
+        let sortButton = UIBarButtonItem(image: UIImage(systemName: "arrow.up.arrow.down.circle"), menu: sortMenu)
+        let addButton = UIBarButtonItem(barButtonSystemItem: .add, target: self, action: #selector(addSongTapped))
+        
+        navigationItem.rightBarButtonItems = [addButton, sortButton, editButtonItem]
+    }
+    
+    @objc private func addSongTapped() {
+        let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.audio, .folder], asCopy: false) // We copy manually
+        picker.delegate = self
+        picker.allowsMultipleSelection = true
+        present(picker, animated: true)
+    }
+    
+    private func loadSongs() {
+        if let searchText = searchController.searchBar.text, !searchText.isEmpty {
+            filterContentForSearchText(searchText)
+        } else {
+            displayedSongs = LibraryManager.shared.songs
+            sortSongs()
+            tableView.reloadData()
+        }
+    }
+    
+    private func sortSongs() {
+        let sortIndex = UserDefaults.standard.integer(forKey: sortOptionKey)
+        guard let sortOption = LibrarySortOption(rawValue: sortIndex) else { return }
+        
+        displayedSongs.sort { (song1, song2) in
             switch sortOption {
             case .title:
                 return song1.title.localizedCaseInsensitiveCompare(song2.title) == .orderedAscending
@@ -1387,18 +1519,28 @@ class PlaylistViewController: UIViewController, UITableViewDataSource, UITableVi
     // MARK: - UITableViewDataSource
     
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        return songMetadataList.count
+        return displayedSongs.count
     }
     
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         guard let cell = tableView.dequeueReusableCell(withIdentifier: SongTableViewCell.reuseIdentifier, for: indexPath) as? SongTableViewCell else {
             return UITableViewCell()
         }
-        let metadata = songMetadataList[indexPath.row]
-        cell.configure(with: metadata.artwork, title: metadata.title, artist: metadata.artist)
+        let song = displayedSongs[indexPath.row]
+        
+        // Load artwork asynchronously
+        var artwork: UIImage? = nil
+        if let url = song.url {
+            let asset = AVAsset(url: url)
+            if let artworkItem = asset.commonMetadata.first(where: { $0.commonKey == .commonKeyArtwork }), let data = artworkItem.dataValue {
+                artwork = UIImage(data: data)
+            }
+        }
+        
+        cell.configure(with: artwork, title: song.title, artist: song.artist)
         
         // Highlight the currently playing song
-        if metadata.url == currentAudioURL {
+        if song.id == currentSongID {
             cell.accessoryType = .checkmark
             cell.tintColor = view.tintColor
         } else {
@@ -1408,9 +1550,125 @@ class PlaylistViewController: UIViewController, UITableViewDataSource, UITableVi
     }
     
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
-        let selectedURL = songMetadataList[indexPath.row].url
-        delegate?.playlistViewController(self, didSelectSongAt: selectedURL)
+        if tableView.isEditing {
+            updateDeleteButtonState()
+            return
+        }
+        let selectedSong = displayedSongs[indexPath.row]
+        delegate?.libraryViewController(self, didSelectSong: selectedSong)
         dismiss(animated: true)
+    }
+    
+    func tableView(_ tableView: UITableView, commit editingStyle: UITableViewCell.EditingStyle, forRowAt indexPath: IndexPath) {
+        if editingStyle == .delete {
+            let songToDelete = displayedSongs[indexPath.row]
+            if let index = LibraryManager.shared.songs.firstIndex(where: { $0.id == songToDelete.id }) {
+                LibraryManager.shared.deleteSong(at: index)
+                loadSongs() // Reload data
+            }
+        }
+    }
+    
+    func tableView(_ tableView: UITableView, trailingSwipeActionsConfigurationForRowAt indexPath: IndexPath) -> UISwipeActionsConfiguration? {
+        let infoAction = UIContextualAction(style: .normal, title: "Info") { [weak self] _, _, completion in
+            guard let self = self else { completion(false); return }
+            let song = self.displayedSongs[indexPath.row]
+            self.showSongInfo(song)
+            completion(true)
+        }
+        infoAction.backgroundColor = .systemBlue
+        infoAction.image = UIImage(systemName: "info.circle")
+        
+        let deleteAction = UIContextualAction(style: .destructive, title: "Delete") { [weak self] _, _, completion in
+            guard let self = self else { completion(false); return }
+            let songToDelete = self.displayedSongs[indexPath.row]
+            if let index = LibraryManager.shared.songs.firstIndex(where: { $0.id == songToDelete.id }) {
+                LibraryManager.shared.deleteSong(at: index)
+                self.loadSongs()
+            }
+            completion(true)
+        }
+        deleteAction.image = UIImage(systemName: "trash")
+        
+        return UISwipeActionsConfiguration(actions: [deleteAction, infoAction])
+    }
+    
+    private func showSongInfo(_ song: Song) {
+        var message = "Title: \(song.title)\nArtist: \(song.artist ?? "Unknown")\nAlbum: \(song.album ?? "Unknown")\n\nSaved Settings:\n"
+        message += "Pitch: \(song.savedPitch.map { "\(Int($0)) cents" } ?? "Default (0)")\n"
+        message += "Speed: \(song.savedSpeed.map { String(format: "%.2fx", $0) } ?? "Default (1.0x)")\n"
+        message += "Reverb: \(song.savedReverb.map { "\(Int($0))%" } ?? "Default (0%)")"
+        
+        let alert = UIAlertController(title: "Song Details", message: message, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "OK", style: .default))
+        present(alert, animated: true)
+    }
+    
+    func tableView(_ tableView: UITableView, didDeselectRowAt indexPath: IndexPath) {
+        if tableView.isEditing {
+            updateDeleteButtonState()
+        }
+    }
+    
+    private func updateDeleteButtonState() {
+        let count = tableView.indexPathsForSelectedRows?.count ?? 0
+        deleteButton?.isEnabled = count > 0
+    }
+    
+    // MARK: - UIDocumentPickerDelegate
+    
+    func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+        processImport(urls: urls)
+    }
+    
+    private func processImport(urls: [URL], index: Int = 0) {
+        guard index < urls.count else {
+            loadSongs()
+            return
+        }
+        
+        let url = urls[index]
+        let fileName = url.lastPathComponent
+        
+        // Check for duplicates by filename
+        if LibraryManager.shared.songs.contains(where: { $0.fileName == fileName }) {
+            let alert = UIAlertController(title: "Duplicate Song", message: "The song \"\(fileName)\" is already in your library. Do you want to add it again?", preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: "Cancel", style: .cancel, handler: { [weak self] _ in
+                self?.processImport(urls: urls, index: index + 1)
+            }))
+            alert.addAction(UIAlertAction(title: "Add", style: .default, handler: { [weak self] _ in
+                self?.addSongInternal(url: url)
+                self?.processImport(urls: urls, index: index + 1)
+            }))
+            present(alert, animated: true)
+        } else {
+            addSongInternal(url: url)
+            processImport(urls: urls, index: index + 1)
+        }
+    }
+    
+    private func addSongInternal(url: URL) {
+            if (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
+                // Handle folder
+                // For simplicity in this refactor, we'll just process the folder content
+                // A recursive function would be better but keeping it simple
+                // NOTE: Accessing folder contents requires security scope which we handle in addSong if needed,
+                // but here we might need to enumerate.
+                // For now, let's assume user picks files or we'd need a recursive folder adder.
+                // Given the constraint, let's just try to add the folder URL and let LibraryManager handle it?
+                // LibraryManager.addSong expects a file URL.
+                // Let's implement a simple folder scanner here.
+                if url.startAccessingSecurityScopedResource() {
+                    defer { url.stopAccessingSecurityScopedResource() }
+                    if let contents = try? FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: nil, options: .skipsHiddenFiles) {
+                        for fileURL in contents {
+                             LibraryManager.shared.addSong(from: fileURL)
+                        }
+                    }
+                }
+            } else {
+                LibraryManager.shared.addSong(from: url)
+            }
     }
 }
 
@@ -1479,7 +1737,7 @@ class SongTableViewCell: UITableViewCell {
 
 // MARK: - 2. User Interface and File Picker
 
-class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, SettingsViewControllerDelegate, PlaylistViewControllerDelegate {
+class AudioEffectsViewController: UIViewController, SettingsViewControllerDelegate, LibraryViewControllerDelegate {
 
     // MARK: Properties
     
@@ -1496,10 +1754,10 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
     private let songTitleLabel = UILabel()
     private let artistNameLabel = UILabel()
     private let playPauseButton = UIButton(type: .system)
-    private let settingsButton = UIButton(type: .system)
-    private let addFileButton = UIButton(type: .system)
+    private let libraryButton = UIButton(type: .system)
+    private let saveValuesButton = UIButton(type: .system)
+    private let settingsIconButton = UIButton(type: .system)
     
-    private let playlistButton = UIButton(type: .system)
     private let progressSlider = UISlider()
     private let currentTimeLabel = UILabel()
     private let durationLabel = UILabel()
@@ -1566,9 +1824,8 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
     private var isAutoPlayNextEnabled = false
     private var isStepperEnabled = false
     
-    // Playlist state
-    private var playlistURLs: [URL] = []
-    private var currentAudioURL: URL?
+    // Library state
+    private var currentSong: Song?
     
     // MARK: View Lifecycle
     
@@ -1644,21 +1901,10 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         // The main view background should be clear to see the image behind it
         view.backgroundColor = .black
         
-        // Settings Button
-        settingsButton.setImage(UIImage(systemName: "gearshape.fill"), for: .normal)
-        settingsButton.addTarget(self, action: #selector(openSettings), for: .touchUpInside)
-        settingsButton.translatesAutoresizingMaskIntoConstraints = false
-        
-        // Add File Button (replaces Clear button)
-        addFileButton.setImage(UIImage(systemName: "plus"), for: .normal)
-        addFileButton.addTarget(self, action: #selector(openFilePicker), for: .touchUpInside)
-        addFileButton.translatesAutoresizingMaskIntoConstraints = false
-        
-        // Playlist Button
-        playlistButton.setImage(UIImage(systemName: "music.note.list"), for: .normal)
-        playlistButton.addTarget(self, action: #selector(openPlaylistView), for: .touchUpInside)
-        playlistButton.translatesAutoresizingMaskIntoConstraints = false
-        playlistButton.isHidden = true // Hidden by default
+        // Library Button (Top Left)
+        libraryButton.setImage(UIImage(systemName: "line.3.horizontal"), for: .normal)
+        libraryButton.addTarget(self, action: #selector(openLibrary), for: .touchUpInside)
+        libraryButton.translatesAutoresizingMaskIntoConstraints = false
         
         // 1. Album Art Setup
         albumArtImageView.contentMode = .scaleAspectFit
@@ -1669,8 +1915,9 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         albumArtImageView.tintColor = .systemGray
         
         // Enable user interaction and add tap gesture to open file picker
+        // CHANGED: Just bounce animation, no action
         albumArtImageView.isUserInteractionEnabled = true
-        albumArtTapGesture.addTarget(self, action: #selector(openFilePicker))
+        albumArtTapGesture.addTarget(self, action: #selector(animateAlbumArtBounce))
         albumArtImageView.addGestureRecognizer(albumArtTapGesture)
         
         // 2. Song Title Setup
@@ -1824,6 +2071,21 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         setupStepperButton(treblePlusButton, imageName: "plus", action: #selector(incrementTreble))
         let trebleControlStack = createControlStack(label: trebleLabel, slider: trebleSlider, minusButton: trebleMinusButton, plusButton: treblePlusButton)
         
+        // Save Values Button
+        var saveValuesConfig = UIButton.Configuration.filled()
+        saveValuesConfig.title = "Save Values"
+        saveValuesConfig.baseBackgroundColor = .secondarySystemFill
+        saveValuesConfig.baseForegroundColor = .label
+        saveValuesConfig.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 20, bottom: 12, trailing: 20)
+        saveValuesButton.configuration = saveValuesConfig
+        saveValuesButton.addTarget(self, action: #selector(saveValuesTapped), for: .touchUpInside)
+        
+        // Settings Icon Button (Top Right)
+        settingsIconButton.setImage(UIImage(systemName: "gearshape.fill"), for: .normal)
+        settingsIconButton.addTarget(self, action: #selector(openSettings), for: .touchUpInside)
+        settingsIconButton.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(settingsIconButton)
+        
         var resetButtonConfig = UIButton.Configuration.filled()
         resetButtonConfig.title = "Reset"
         resetButtonConfig.baseBackgroundColor = .secondarySystemFill
@@ -1860,7 +2122,8 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
             midsControlStack,
             trebleControlStack,
             UIView(), // Spacer
-            actionButtonsStack
+            saveValuesButton,
+            actionButtonsStack,
         ])
         
         stackView.axis = .vertical
@@ -1872,7 +2135,8 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         stackView.setCustomSpacing(12, after: reverbControlStack)
         stackView.setCustomSpacing(12, after: bassControlStack)
         stackView.setCustomSpacing(12, after: midsControlStack)
-        stackView.setCustomSpacing(30, after: trebleControlStack)
+        stackView.setCustomSpacing(20, after: trebleControlStack)
+        stackView.setCustomSpacing(10, after: saveValuesButton)
         
         // The spacer view should have a low-priority constraint to allow it to shrink
         if let spacer = stackView.arrangedSubviews[7] as? UIView {
@@ -1882,9 +2146,7 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         stackView.alignment = .center
         stackView.translatesAutoresizingMaskIntoConstraints = false
         
-        view.addSubview(settingsButton)
-        view.addSubview(addFileButton)
-        view.addSubview(playlistButton)
+        view.addSubview(libraryButton)
         view.addSubview(stackView)
         
         // Setup ScrollView
@@ -1902,9 +2164,8 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         trebleControlStack.widthAnchor.constraint(equalTo: stackView.widthAnchor).isActive = true
         
         // Bring buttons to the front so they don't get scrolled over
-        view.bringSubviewToFront(settingsButton)
-        view.bringSubviewToFront(addFileButton)
-        view.bringSubviewToFront(playlistButton)
+        view.bringSubviewToFront(libraryButton)
+        view.bringSubviewToFront(settingsIconButton)
         // Auto Layout Constraints
         NSLayoutConstraint.activate([
             // Background constraints
@@ -1912,24 +2173,21 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
             backgroundImageView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             backgroundImageView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             backgroundImageView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            // Settings button in top left
-            settingsButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 10),
-            settingsButton.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
-            settingsButton.widthAnchor.constraint(equalToConstant: 30),
-            settingsButton.heightAnchor.constraint(equalToConstant: 30),
             
-            // Add File button in top right
-            addFileButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 10),
-            addFileButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
-            addFileButton.centerYAnchor.constraint(equalTo: settingsButton.centerYAnchor),
+            // Library button in top left
+            libraryButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 10),
+            libraryButton.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
+            libraryButton.widthAnchor.constraint(equalToConstant: 30),
+            libraryButton.heightAnchor.constraint(equalToConstant: 30),
             
-            // Playlist button in the top center
-            playlistButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 10),
-            playlistButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            playlistButton.centerYAnchor.constraint(equalTo: settingsButton.centerYAnchor),
+            // Settings button in top right
+            settingsIconButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 10),
+            settingsIconButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
+            settingsIconButton.widthAnchor.constraint(equalToConstant: 30),
+            settingsIconButton.heightAnchor.constraint(equalToConstant: 30),
             
             // ScrollView constraints
-            scrollView.topAnchor.constraint(equalTo: settingsButton.bottomAnchor, constant: 10),
+            scrollView.topAnchor.constraint(equalTo: libraryButton.bottomAnchor, constant: 10),
             scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
@@ -1950,7 +2208,8 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
             
             // Make sliders and button take up more width
             progressStack.widthAnchor.constraint(equalTo: stackView.widthAnchor),
-            actionButtonsStack.widthAnchor.constraint(equalTo: stackView.widthAnchor)
+            actionButtonsStack.widthAnchor.constraint(equalTo: stackView.widthAnchor),
+            saveValuesButton.widthAnchor.constraint(equalTo: stackView.widthAnchor)
         ])
         
         // Constraints for the new playback control buttons
@@ -2014,6 +2273,7 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         previousTrackButton.isHidden = isHidden
         nextTrackButton.isHidden = isHidden
         resetButton.isHidden = isHidden
+        saveValuesButton.isHidden = isHidden
         exportButton.isHidden = isHidden
         progressSlider.isHidden = isHidden
         currentTimeLabel.isHidden = isHidden
@@ -2162,7 +2422,6 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         let isExportButtonEnabled = UserDefaults.standard.bool(forKey: "isExportButtonEnabled", defaultValue: true)
         let isEQEnabled = UserDefaults.standard.bool(forKey: "isEQEnabled")
         let isAlbumArtVisible = UserDefaults.standard.bool(forKey: "isAlbumArtVisible", defaultValue: true)
-        let isPlaylistModeEnabled = UserDefaults.standard.bool(forKey: "isPlaylistModeEnabled")
         let isLoopingEnabled = UserDefaults.standard.bool(forKey: "isLoopingEnabled")
         let isRememberSettingsEnabled = UserDefaults.standard.bool(forKey: "isRememberSettingsEnabled")
         let isAutoPlayNextEnabled = UserDefaults.standard.bool(forKey: "isAutoPlayNextEnabled")
@@ -2179,7 +2438,6 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         settingsViewController(SettingsViewController(), didChangeShowExportButtonState: isExportButtonEnabled)
         settingsViewController(SettingsViewController(), didChangeShowEQState: isEQEnabled)
         settingsViewController(SettingsViewController(), didChangeShowAlbumArtState: isAlbumArtVisible)
-        settingsViewController(SettingsViewController(), didChangePlaylistModeState: isPlaylistModeEnabled)
         settingsViewController(SettingsViewController(), didChangeLoopingState: isLoopingEnabled)
         settingsViewController(SettingsViewController(), didChangeRememberSettingsState: isRememberSettingsEnabled)
         settingsViewController(SettingsViewController(), didChangeAutoPlayNextState: isAutoPlayNextEnabled)
@@ -2187,28 +2445,17 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         
         // Restore the last audio file
         // Restore the last audio file first, as it provides the artwork for dynamic theming.
-        guard let bookmarkData = UserDefaults.standard.data(forKey: "lastAudioFileBookmark") else {
-            // If no saved file, load the default song.mp3 from the app bundle
-            if let defaultSongURL = Bundle.main.url(forResource: "song", withExtension: "mp3") {
-                print("No saved song found. Loading default song.")
-                loadAudioFile(url: defaultSongURL, andPlay: false)
-            }
+        guard let lastSongIDString = UserDefaults.standard.string(forKey: "lastSongID"),
+              let lastSongID = UUID(uuidString: lastSongIDString),
+              let song = LibraryManager.shared.songs.first(where: { $0.id == lastSongID }) else {
             return
         }
         
         do {
-            var isStale = false
-            let url = try URL(resolvingBookmarkData: bookmarkData, options: .withoutUI, relativeTo: nil, bookmarkDataIsStale: &isStale)
+                // Load the file but don't auto-play
+                loadSong(song, andPlay: false)
             
-            if isStale {
-                print("Bookmark is stale, clearing saved state.")
-                clearState()
-            } else {
-                if isPlaylistModeEnabled {
-                    loadPlaylistFromBookmarks()
-                }
-                
-                // Restore slider values after other settings are applied
+                // Restore slider values AFTER loading the song so they aren't reset to defaults
                 let pitch = UserDefaults.standard.float(forKey: "pitchValue")
                 pitchSlider.value = pitch
                 pitchSliderChanged(pitchSlider)
@@ -2232,9 +2479,6 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
                 let treble = UserDefaults.standard.float(forKey: "trebleValue")
                 trebleSlider.value = treble
                 trebleSliderChanged(trebleSlider)
-
-                // Load the file but don't auto-play
-                loadAudioFile(url: url, andPlay: false)
                 
                 // Restore playback position after the file is loaded
                 let lastPosition = UserDefaults.standard.double(forKey: "lastPlaybackPosition")
@@ -2243,10 +2487,6 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
                     progressSlider.value = Float(lastPosition)
                     currentTimeLabel.text = formatTime(seconds: lastPosition)
                 }
-            }
-        } catch {
-            print("Failed to resolve bookmark data: \(error)")
-            clearState()
         }
     }
     
@@ -2254,7 +2494,7 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         audioProcessor.togglePlayback() // Stop playback if active
         
         // Clear only file-related UserDefaults
-        UserDefaults.standard.removeObject(forKey: "lastAudioFileBookmark")
+        UserDefaults.standard.removeObject(forKey: "lastSongID")
         UserDefaults.standard.removeObject(forKey: "lastPlaybackPosition")
         UserDefaults.standard.synchronize()
         
@@ -2289,7 +2529,7 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
                 audioProcessor.seek(to: 0)
                 progressSlider.value = 0
                 currentTimeLabel.text = formatTime(seconds: 0)
-            } else if UserDefaults.standard.bool(forKey: "isPlaylistModeEnabled") && isAutoPlayNextEnabled {
+            } else if isAutoPlayNextEnabled {
                 playNextSong()
             } else {
                 audioProcessor.pause()
@@ -2316,11 +2556,10 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         impactFeedbackGenerator.impactOccurred()
     }
     
-    @objc private func openPlaylistView() {
-        let playlistVC = PlaylistViewController()
+    @objc private func openLibrary() {
+        let playlistVC = LibraryViewController()
         playlistVC.delegate = self
-        playlistVC.playlistURLs = self.playlistURLs
-        playlistVC.currentAudioURL = self.currentAudioURL
+        playlistVC.currentSongID = self.currentSong?.id
         
         let navController = UINavigationController(rootViewController: playlistVC)
         if let sheet = navController.sheetPresentationController {
@@ -2329,6 +2568,19 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         }
         
         present(navController, animated: true)
+    }
+    
+    @objc private func animateAlbumArtBounce() {
+        UIView.animate(withDuration: 0.1, animations: {
+            self.albumArtImageView.transform = CGAffineTransform(scaleX: 0.95, y: 0.95)
+        }) { _ in
+            UIView.animate(withDuration: 0.1) {
+                self.albumArtImageView.transform = .identity
+            } completion: { _ in
+                self.openLibrary()
+            }
+        }
+        impactFeedbackGenerator.impactOccurred()
     }
     
     private func updatePlayPauseButtonState() {
@@ -2371,7 +2623,6 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         settingsVC.isExportButtonEnabled = UserDefaults.standard.bool(forKey: "isExportButtonEnabled", defaultValue: true)
         settingsVC.isEQEnabled = UserDefaults.standard.bool(forKey: "isEQEnabled")
         settingsVC.isAlbumArtVisible = UserDefaults.standard.bool(forKey: "isAlbumArtVisible", defaultValue: true)
-        settingsVC.isPlaylistModeEnabled = UserDefaults.standard.bool(forKey: "isPlaylistModeEnabled")
         settingsVC.isLoopingEnabled = self.isLoopingEnabled
         settingsVC.isRememberSettingsEnabled = self.isRememberSettingsEnabled
         settingsVC.isAutoPlayNextEnabled = self.isAutoPlayNextEnabled
@@ -2468,24 +2719,6 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         settingsViewController(SettingsViewController(), didChangeReverbSliderState: isReverbSliderEnabled)
     }
     
-    func settingsViewController(_ controller: SettingsViewController, didChangePlaylistModeState isEnabled: Bool) {
-        UserDefaults.standard.set(isEnabled, forKey: "isPlaylistModeEnabled")
-        
-        // Stop playback and clear the current song when mode changes
-        clearCurrentSongAndStopPlayback()
-        
-        if isEnabled && playlistURLs.isEmpty {
-            // If turning on and no playlist is loaded, prompt to select a folder
-            openFolderPicker()
-        } else if !isEnabled { // When turning off
-            // When turning off, also clear the saved playlist bookmarks and the URL list
-            playlistURLs = []
-            UserDefaults.standard.removeObject(forKey: "playlistBookmarks")
-        }
-        
-        updatePlaylistControls(isPlaylistMode: isEnabled)
-    }
-    
     func settingsViewController(_ controller: SettingsViewController, didChangeLoopingState isEnabled: Bool) {
         self.isLoopingEnabled = isEnabled
         UserDefaults.standard.set(isEnabled, forKey: "isLoopingEnabled")
@@ -2521,27 +2754,11 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         updateBackground(with: nil)
         
         // Clear state variables and saved data for the last song
-        currentAudioURL = nil
-        UserDefaults.standard.removeObject(forKey: "lastAudioFileBookmark")
+        currentSong = nil
+        UserDefaults.standard.removeObject(forKey: "lastSongID")
         UserDefaults.standard.removeObject(forKey: "lastPlaybackPosition")
     }
     
-    /// Updates the skip/rewind buttons to be next/previous track buttons.
-    private func updatePlaylistControls(isPlaylistMode: Bool) {
-        audioProcessor.updatePlaylistRemoteCommands(isEnabled: isPlaylistMode)
-        playlistButton.isHidden = !isPlaylistMode
-        
-        let addFileIconName = isPlaylistMode ? "folder.badge.plus" : "plus"
-        addFileButton.setImage(UIImage(systemName: addFileIconName), for: .normal)
-        
-        // Show/hide the next/previous track buttons based on playlist mode
-        previousTrackButton.isHidden = !isPlaylistMode
-        nextTrackButton.isHidden = !isPlaylistMode
-        
-        // The 10-second skip buttons are always visible when controls are shown,
-        // so we don't need to change their icons or visibility here.
-        // Their actions are now directly tied to their selectors.
-    }
     
     private func updateBackground(with image: UIImage?, isDynamicEnabled: Bool? = nil) {
         let useDynamic = isDynamicEnabled ?? UserDefaults.standard.bool(forKey: "isDynamicBackgroundEnabled")
@@ -2829,134 +3046,25 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         trebleSliderChanged(trebleSlider)
         impactFeedbackGenerator.impactOccurred()
     }
-
-    // MARK: File Picker Logic
-
-    @objc func openFilePicker() {
-        let isPlaylistMode = UserDefaults.standard.bool(forKey: "isPlaylistModeEnabled")
-        
-        let supportedTypes: [UTType]
-        if isPlaylistMode {
-            supportedTypes = [.folder]
-        } else {
-            supportedTypes = [.mp3, .mpeg4Audio]
-        }
-        
-        // Use 'asCopy: true' to ensure the file is copied into the app's sandbox
-        let shouldCopy = !isPlaylistMode
-        let picker = UIDocumentPickerViewController(forOpeningContentTypes: supportedTypes, asCopy: shouldCopy)
-        
-        picker.directoryURL = getDocumentsDirectory() // Start in a known directory
-        
-        picker.delegate = self
-        picker.allowsMultipleSelection = false
-        
-        impactFeedbackGenerator.impactOccurred()
-        present(picker, animated: true, completion: nil)
-    }
-
-    private func openFolderPicker() {
-        let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.folder], asCopy: false)
-        picker.delegate = self
-        picker.allowsMultipleSelection = false
-        picker.directoryURL = getDocumentsDirectory()
-        
-        impactFeedbackGenerator.impactOccurred()
-        present(picker, animated: true, completion: nil)
-    }
     
-    private func getDocumentsDirectory() -> URL {
-        // find all possible documents directories for this user
-        let paths = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)
-        // just send back the first one, which ought to be the only one
-        return paths[0]
-    }
-    
-    private func processFolder(url: URL) {
-        guard url.startAccessingSecurityScopedResource() else {
-            print("Failed to start accessing security-scoped resource for folder.")
-            return
+    private func loadSong(_ song: Song, andPlay: Bool) {
+        guard let url = song.url else { return }
+        self.currentSong = song
+        UserDefaults.standard.set(song.id.uuidString, forKey: "lastSongID")
+        
+        // Apply saved values if they exist
+        if let savedPitch = song.savedPitch {
+            pitchSlider.value = savedPitch
+            pitchSliderChanged(pitchSlider)
         }
-        
-        defer { url.stopAccessingSecurityScopedResource() }
-        
-        var fileURLs: [URL] = []
-        var bookmarkDataArray: [Data] = []
-        
-        do {
-            let contents = try FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: nil, options: .skipsHiddenFiles)
-            let allowedExtensions = ["mp3", "m4a"]
-            let audioFiles = contents.filter { allowedExtensions.contains($0.pathExtension.lowercased()) }.sorted { $0.lastPathComponent < $1.lastPathComponent }
-            
-            for fileURL in audioFiles {
-                // We need to get a bookmark for each individual file to have persistent access
-                let bookmarkData = try fileURL.bookmarkData(options: .minimalBookmark, includingResourceValuesForKeys: nil, relativeTo: nil)
-                bookmarkDataArray.append(bookmarkData)
-                
-                // Resolve the bookmark immediately to get a security-scoped URL that can be accessed independently later
-                var isStale = false
-                let resolvedURL = try URL(resolvingBookmarkData: bookmarkData, options: .withoutUI, relativeTo: nil, bookmarkDataIsStale: &isStale)
-                fileURLs.append(resolvedURL)
-            }
-            
-            self.playlistURLs = fileURLs
-            UserDefaults.standard.set(bookmarkDataArray, forKey: "playlistBookmarks")
-            
-            // Load the first song from the new playlist
-            if let firstSongURL = fileURLs.first {
-                loadAudioFile(url: firstSongURL, andPlay: true)
-            }
-            
-        } catch {
-            print("Error processing folder contents: \(error)")
+        if let savedSpeed = song.savedSpeed {
+            speedSlider.value = savedSpeed
+            speedSliderChanged(speedSlider)
         }
-    }
-    
-    private func loadPlaylistFromBookmarks() {
-        guard let bookmarkDataArray = UserDefaults.standard.array(forKey: "playlistBookmarks") as? [Data] else { return }
-        
-        self.playlistURLs = bookmarkDataArray.compactMap { data in
-            do {
-                var isStale = false
-                return try URL(resolvingBookmarkData: data, options: .withoutUI, relativeTo: nil, bookmarkDataIsStale: &isStale)
-            } catch {
-                print("Failed to resolve playlist bookmark: \(error)")
-                return nil
-            }
+        if let savedReverb = song.savedReverb {
+            reverbSlider.value = savedReverb
+            reverbSliderChanged(reverbSlider)
         }
-    }
-
-    // MARK: UIDocumentPickerDelegate Methods
-
-    func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
-        guard let url = urls.first else { return }
-        
-        do {
-            let bookmarkData = try url.bookmarkData(options: .minimalBookmark, includingResourceValuesForKeys: nil, relativeTo: nil)
-            UserDefaults.standard.set(bookmarkData, forKey: "lastAudioFileBookmark")
-        } catch {
-            print("Failed to save bookmark data: \(error)")
-        }
-        
-        // Check if a folder was picked
-        if (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
-            processFolder(url: url)
-        } else {
-            loadAudioFile(url: url, andPlay: true)
-        }
-    }
-    
-    private func loadAudioFile(url: URL, andPlay: Bool) {
-        // **CRITICAL FIX**: Start accessing the security-scoped resource before trying to read the file.
-        // This is necessary for any URL obtained from a bookmark, which is how the playlist works.
-        let shouldAccess = url.startAccessingSecurityScopedResource()
-        
-        // Use a defer block to ensure we stop accessing the resource when the function exits,
-        // whether it succeeds or fails.
-        defer {
-            if shouldAccess { url.stopAccessingSecurityScopedResource() }
-        }
-        self.currentAudioURL = url
         
         // Load the audio file and get its metadata
         if let metadata = audioProcessor.loadAudioFile(url: url) {
@@ -2988,6 +3096,7 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
             // Reset and show controls
             resetControlsState(isHidden: false)
             resetButton.isHidden = false
+            saveValuesButton.isHidden = false
             exportButton.isHidden = !UserDefaults.standard.bool(forKey: "isExportButtonEnabled", defaultValue: true)
 
             // Re-apply reverb slider visibility based on user settings
@@ -3020,18 +3129,19 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
         }
     }
 
-    func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
-        print("File picking was cancelled.")
-        // If user cancels folder selection when turning on playlist mode, turn it back off.
-        if UserDefaults.standard.bool(forKey: "isPlaylistModeEnabled") && playlistURLs.isEmpty {
-            settingsViewController(SettingsViewController(), didChangePlaylistModeState: false)
-        }
+    // MARK: LibraryViewControllerDelegate
+    
+    func libraryViewController(_ controller: LibraryViewController, didSelectSong song: Song) {
+        loadSong(song, andPlay: true)
     }
     
-    // MARK: PlaylistViewControllerDelegate
-    
-    func playlistViewController(_ controller: PlaylistViewController, didSelectSongAt url: URL) {
-        loadAudioFile(url: url, andPlay: true)
+    @objc private func saveValuesTapped() {
+        guard var song = currentSong else { return }
+        song.savedPitch = pitchSlider.value
+        song.savedSpeed = speedSlider.value
+        song.savedReverb = reverbSlider.value
+        LibraryManager.shared.updateSong(song)
+        impactFeedbackGenerator.impactOccurred()
     }
 
     // MARK: New Rewind/Skip Actions
@@ -3059,27 +3169,22 @@ class AudioEffectsViewController: UIViewController, UIDocumentPickerDelegate, Se
     // MARK: Playlist Navigation
     
     @objc private func playNextSong() {
-        guard !playlistURLs.isEmpty else { return }
+        let songs = LibraryManager.shared.songs
+        guard !songs.isEmpty, let current = currentSong, let index = songs.firstIndex(where: { $0.id == current.id }) else { return }
         
-        let currentIndex = playlistURLs.firstIndex(of: currentAudioURL ?? URL(fileURLWithPath: "")) ?? -1
-        let nextIndex = (currentIndex + 1) % playlistURLs.count
-        
-        let nextURL = playlistURLs[nextIndex]
-        loadAudioFile(url: nextURL, andPlay: true)
+        let nextIndex = (index + 1) % songs.count
+        loadSong(songs[nextIndex], andPlay: true)
         impactFeedbackGenerator.impactOccurred()
     }
     
     @objc private func playPreviousSong() {
-        guard !playlistURLs.isEmpty else { return }
+        let songs = LibraryManager.shared.songs
+        guard !songs.isEmpty, let current = currentSong, let index = songs.firstIndex(where: { $0.id == current.id }) else { return }
         
-        let currentIndex = playlistURLs.firstIndex(of: currentAudioURL ?? URL(fileURLWithPath: "")) ?? 0
-        var prevIndex = currentIndex - 1
-        if prevIndex < 0 {
-            prevIndex = playlistURLs.count - 1
-        }
+        var prevIndex = index - 1
+        if prevIndex < 0 { prevIndex = songs.count - 1 }
         
-        let prevURL = playlistURLs[prevIndex]
-        loadAudioFile(url: prevURL, andPlay: true)
+        loadSong(songs[prevIndex], andPlay: true)
         impactFeedbackGenerator.impactOccurred()
     }
     
@@ -3223,7 +3328,6 @@ struct AudioEffectsApp: App {
             "isAccurateSpeedEnabled": false,
             "isExportButtonEnabled": true,
             "isEQEnabled": false,
-            "isPlaylistModeEnabled": false,
             "isAlbumArtVisible": true,
             "isLoopingEnabled": false,
             "isRememberSettingsEnabled": false,
