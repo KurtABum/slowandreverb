@@ -732,6 +732,7 @@ protocol SettingsViewControllerDelegate: AnyObject {
     func settingsViewController(_ controller: SettingsViewController, didChangeRememberSettingsState isEnabled: Bool)
     func settingsViewController(_ controller: SettingsViewController, didChangeAutoPlayNextState isEnabled: Bool)
     func settingsViewController(_ controller: SettingsViewController, didChangeStepperState isEnabled: Bool)
+    func settingsViewController(_ controller: SettingsViewController, didChangeAutoLoadAddedSongState isEnabled: Bool)
 }
 
 /// A simple view controller to display app settings.
@@ -754,6 +755,7 @@ class SettingsViewController: UIViewController {
     var isRememberSettingsEnabled: Bool = false
     var isAutoPlayNextEnabled: Bool = false
     var isStepperEnabled: Bool = false
+    var isAutoLoadAddedSongEnabled: Bool = false
     private let impactFeedbackGenerator = UIImpactFeedbackGenerator(style: .light)
     
     private let scrollView = UIScrollView()
@@ -806,6 +808,9 @@ class SettingsViewController: UIViewController {
     private let stepperSwitch = UISwitch()
     private let stepperLabel = UILabel()
     
+    private let autoLoadAddedSongSwitch = UISwitch()
+    private let autoLoadAddedSongLabel = UILabel()
+    
     private var themeStack: UIStackView!
 
     override func viewDidLoad() {
@@ -844,9 +849,13 @@ class SettingsViewController: UIViewController {
         // Helper to create header labels
         func createHeaderLabel(with text: String) -> UILabel {
             let label = UILabel()
-            label.text = text
-            label.font = .systemFont(ofSize: 18, weight: .bold)
-            label.textColor = .label
+            let attributes: [NSAttributedString.Key: Any] = [
+                .font: UIFont.systemFont(ofSize: 22, weight: .bold),
+                .foregroundColor: UIColor.label,
+                .underlineStyle: NSUnderlineStyle.single.rawValue
+            ]
+            label.attributedText = NSAttributedString(string: text, attributes: attributes)
+            label.textAlignment = .center
             return label
         }
 
@@ -1025,6 +1034,17 @@ class SettingsViewController: UIViewController {
         let stepperGroup = UIStackView(arrangedSubviews: [stepperStack, stepperDescription])
         stepperGroup.axis = .vertical
         stepperGroup.spacing = 4
+        
+        // --- Auto-Load Added Song Setting ---
+        autoLoadAddedSongLabel.text = "Auto-Load Added Song"
+        autoLoadAddedSongSwitch.isOn = isAutoLoadAddedSongEnabled
+        autoLoadAddedSongSwitch.addTarget(self, action: #selector(autoLoadAddedSongSwitchChanged), for: .valueChanged)
+        let autoLoadAddedSongStack = UIStackView(arrangedSubviews: [autoLoadAddedSongLabel, autoLoadAddedSongSwitch])
+        autoLoadAddedSongStack.spacing = 20
+        let autoLoadAddedSongDescription = createDescriptionLabel(with: "Automatically plays a song when you add it to the library (single file only).")
+        let autoLoadAddedSongGroup = UIStackView(arrangedSubviews: [autoLoadAddedSongStack, autoLoadAddedSongDescription])
+        autoLoadAddedSongGroup.axis = .vertical
+        autoLoadAddedSongGroup.spacing = 4
 
         // --- Main Settings Stack ---
         let settingsOptionsStack = UIStackView(arrangedSubviews: [
@@ -1035,6 +1055,10 @@ class SettingsViewController: UIViewController {
             loopingGroup,
             autoPlayNextGroup,
             
+            createHeaderLabel(with: "Accuracy"),
+            accuratePitchGroup,
+            preciseSpeedGroup,
+            
             createHeaderLabel(with: "Interface"),
             reverbSliderGroup,
             eqGroup,
@@ -1043,10 +1067,6 @@ class SettingsViewController: UIViewController {
             resetSlidersOnTapGroup,
             exportButtonGroup,
             
-            createHeaderLabel(with: "Accuracy"),
-            accuratePitchGroup,
-            preciseSpeedGroup,
-            
             createHeaderLabel(with: "Theme"),
             dynamicThemeGroup,
             albumArtGroup,
@@ -1054,7 +1074,8 @@ class SettingsViewController: UIViewController {
             animatedBackgroundGroup,
             
             createHeaderLabel(with: "Extras"),
-            rememberSettingsGroup
+            rememberSettingsGroup,
+            autoLoadAddedSongGroup
         ])
         settingsOptionsStack.axis = .vertical
         settingsOptionsStack.spacing = 25
@@ -1222,6 +1243,11 @@ class SettingsViewController: UIViewController {
         delegate?.settingsViewController(self, didChangeStepperState: sender.isOn)
         impactFeedbackGenerator.impactOccurred()
     }
+    
+    @objc private func autoLoadAddedSongSwitchChanged(_ sender: UISwitch) {
+        delegate?.settingsViewController(self, didChangeAutoLoadAddedSongState: sender.isOn)
+        impactFeedbackGenerator.impactOccurred()
+    }
 }
 
 // MARK: - Library Management
@@ -1337,6 +1363,7 @@ class LibraryManager {
 
 protocol LibraryViewControllerDelegate: AnyObject {
     func libraryViewController(_ controller: LibraryViewController, didSelectSong song: Song)
+    func libraryViewControllerDidTapShuffle(_ controller: LibraryViewController)
 }
 
 private enum LibrarySortOption: Int, CaseIterable {
@@ -1358,11 +1385,18 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
     
     private let tableView = UITableView()
     private var displayedSongs: [Song] = []
+    
+    private struct Section {
+        let title: String
+        var songs: [Song]
+    }
+    private var sections: [Section] = []
     private let searchController = UISearchController(searchResultsController: nil)
     
     private let sortOptionKey = "librarySortOption"
     
     private var deleteButton: UIBarButtonItem?
+    private let artworkCache = NSCache<NSString, UIImage>()
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -1380,6 +1414,29 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
         updateRightBarButtons()
         
         navigationController?.navigationBar.prefersLargeTitles = true
+
+        let headerView = UIView()
+        let shuffleButton = UIButton(type: .system)
+        var config = UIButton.Configuration.filled()
+        config.title = "Shuffle"
+        config.image = UIImage(systemName: "shuffle")
+        config.imagePadding = 8
+        config.baseBackgroundColor = .systemGray
+        config.baseForegroundColor = .white
+        shuffleButton.configuration = config
+        shuffleButton.addTarget(self, action: #selector(shuffleTapped), for: .touchUpInside)
+        shuffleButton.translatesAutoresizingMaskIntoConstraints = false
+        headerView.addSubview(shuffleButton)
+        
+        NSLayoutConstraint.activate([
+            shuffleButton.topAnchor.constraint(equalTo: headerView.topAnchor, constant: 10),
+            shuffleButton.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 20),
+            shuffleButton.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -20),
+            shuffleButton.bottomAnchor.constraint(equalTo: headerView.bottomAnchor, constant: -10),
+            shuffleButton.heightAnchor.constraint(equalToConstant: 44)
+        ])
+        headerView.frame.size.height = 64 // Manually set height
+        tableView.tableHeaderView = headerView
 
         tableView.translatesAutoresizingMaskIntoConstraints = false
         tableView.dataSource = self
@@ -1428,6 +1485,11 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
         dismiss(animated: true)
     }
     
+    @objc private func shuffleTapped() {
+        delegate?.libraryViewControllerDidTapShuffle(self)
+        dismiss(animated: true)
+    }
+    
     override func setEditing(_ editing: Bool, animated: Bool) {
         super.setEditing(editing, animated: animated)
         tableView.setEditing(editing, animated: animated)
@@ -1449,7 +1511,7 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
     
     @objc private func deleteSelectedSongs() {
         guard let selectedIndexPaths = tableView.indexPathsForSelectedRows else { return }
-        let songsToDelete = selectedIndexPaths.map { displayedSongs[$0.row] }
+        let songsToDelete = selectedIndexPaths.map { sections[$0.section].songs[$0.row] }
         let idsToDelete = songsToDelete.map { $0.id }
         
         let alert = UIAlertController(title: "Delete Songs", message: "Are you sure you want to delete \(songsToDelete.count) songs?", preferredStyle: .actionSheet)
@@ -1514,30 +1576,62 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
                 return albumComparison == .orderedSame ? song1.title.localizedCaseInsensitiveCompare(song2.title) == .orderedAscending : albumComparison == .orderedAscending
             }
         }
+        updateSections()
+    }
+    
+    private func updateSections() {
+        let sortIndex = UserDefaults.standard.integer(forKey: sortOptionKey)
+        let sortOption = LibrarySortOption(rawValue: sortIndex) ?? .title
+        
+        var newSections: [Section] = []
+        
+        for song in displayedSongs {
+            let keyString: String
+            switch sortOption {
+            case .title: keyString = song.title
+            case .artist: keyString = song.artist ?? ""
+            case .album: keyString = song.album ?? ""
+            }
+            
+            let firstChar = keyString.trimmingCharacters(in: .whitespacesAndNewlines).first.map { String($0).uppercased() } ?? "#"
+            let sectionTitle = firstChar.rangeOfCharacter(from: .letters) != nil ? firstChar : "#"
+            
+            if let lastIndex = newSections.indices.last, newSections[lastIndex].title == sectionTitle {
+                newSections[lastIndex].songs.append(song)
+            } else {
+                newSections.append(Section(title: sectionTitle, songs: [song]))
+            }
+        }
+        self.sections = newSections
     }
     
     // MARK: - UITableViewDataSource
     
+    func numberOfSections(in tableView: UITableView) -> Int {
+        return sections.count
+    }
+    
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        return displayedSongs.count
+        return sections[section].songs.count
+    }
+    
+    func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
+        return sections[section].title
+    }
+    
+    func sectionIndexTitles(for tableView: UITableView) -> [String]? {
+        return sections.map { $0.title }
     }
     
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         guard let cell = tableView.dequeueReusableCell(withIdentifier: SongTableViewCell.reuseIdentifier, for: indexPath) as? SongTableViewCell else {
             return UITableViewCell()
         }
-        let song = displayedSongs[indexPath.row]
+        let song = sections[indexPath.section].songs[indexPath.row]
+        cell.songID = song.id
         
-        // Load artwork asynchronously
-        var artwork: UIImage? = nil
-        if let url = song.url {
-            let asset = AVAsset(url: url)
-            if let artworkItem = asset.commonMetadata.first(where: { $0.commonKey == .commonKeyArtwork }), let data = artworkItem.dataValue {
-                artwork = UIImage(data: data)
-            }
-        }
-        
-        cell.configure(with: artwork, title: song.title, artist: song.artist)
+        // Configure with placeholder initially
+        cell.configure(with: nil, title: song.title, artist: song.artist)
         
         // Highlight the currently playing song
         if song.id == currentSongID {
@@ -1546,6 +1640,30 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
         } else {
             cell.accessoryType = .none
         }
+        
+        // Load artwork asynchronously with caching
+        let cacheKey = song.id.uuidString as NSString
+        if let cachedImage = artworkCache.object(forKey: cacheKey) {
+            cell.setArtwork(cachedImage)
+        } else if let url = song.url {
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                let asset = AVAsset(url: url)
+                var artwork: UIImage?
+                if let artworkItem = asset.commonMetadata.first(where: { $0.commonKey == .commonKeyArtwork }), let data = artworkItem.dataValue {
+                    artwork = UIImage(data: data)
+                }
+                
+                if let image = artwork {
+                    self?.artworkCache.setObject(image, forKey: cacheKey)
+                    DispatchQueue.main.async {
+                        if cell.songID == song.id {
+                            cell.setArtwork(image)
+                        }
+                    }
+                }
+            }
+        }
+        
         return cell
     }
     
@@ -1554,14 +1672,18 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
             updateDeleteButtonState()
             return
         }
-        let selectedSong = displayedSongs[indexPath.row]
+        let selectedSong = sections[indexPath.section].songs[indexPath.row]
         delegate?.libraryViewController(self, didSelectSong: selectedSong)
         dismiss(animated: true)
     }
     
+    func tableView(_ tableView: UITableView, canEditRowAt indexPath: IndexPath) -> Bool {
+        return true
+    }
+    
     func tableView(_ tableView: UITableView, commit editingStyle: UITableViewCell.EditingStyle, forRowAt indexPath: IndexPath) {
         if editingStyle == .delete {
-            let songToDelete = displayedSongs[indexPath.row]
+            let songToDelete = sections[indexPath.section].songs[indexPath.row]
             if let index = LibraryManager.shared.songs.firstIndex(where: { $0.id == songToDelete.id }) {
                 LibraryManager.shared.deleteSong(at: index)
                 loadSongs() // Reload data
@@ -1569,10 +1691,16 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
         }
     }
     
+    func tableView(_ tableView: UITableView, leadingSwipeActionsConfigurationForRowAt indexPath: IndexPath) -> UISwipeActionsConfiguration? {
+        return nil
+    }
+    
     func tableView(_ tableView: UITableView, trailingSwipeActionsConfigurationForRowAt indexPath: IndexPath) -> UISwipeActionsConfiguration? {
+        
         let infoAction = UIContextualAction(style: .normal, title: "Info") { [weak self] _, _, completion in
             guard let self = self else { completion(false); return }
-            let song = self.displayedSongs[indexPath.row]
+            
+            let song = self.sections[indexPath.section].songs[indexPath.row]
             self.showSongInfo(song)
             completion(true)
         }
@@ -1581,11 +1709,13 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
         
         let deleteAction = UIContextualAction(style: .destructive, title: "Delete") { [weak self] _, _, completion in
             guard let self = self else { completion(false); return }
-            let songToDelete = self.displayedSongs[indexPath.row]
+            
+            let songToDelete = self.sections[indexPath.section].songs[indexPath.row]
             if let index = LibraryManager.shared.songs.firstIndex(where: { $0.id == songToDelete.id }) {
                 LibraryManager.shared.deleteSong(at: index)
-                self.loadSongs()
             }
+            
+            self.loadSongs()
             completion(true)
         }
         deleteAction.image = UIImage(systemName: "trash")
@@ -1630,6 +1760,11 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
         let url = urls[index]
         let fileName = url.lastPathComponent
         
+        // Check if we should auto-load (only for single file import)
+        // We also check if it's a directory to avoid auto-playing a random song from a folder import
+        let isDirectory = (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
+        let shouldAutoLoad = urls.count == 1 && !isDirectory && UserDefaults.standard.bool(forKey: "isAutoLoadAddedSongEnabled")
+        
         // Check for duplicates by filename
         if LibraryManager.shared.songs.contains(where: { $0.fileName == fileName }) {
             let alert = UIAlertController(title: "Duplicate Song", message: "The song \"\(fileName)\" is already in your library. Do you want to add it again?", preferredStyle: .alert)
@@ -1638,12 +1773,24 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
             }))
             alert.addAction(UIAlertAction(title: "Add", style: .default, handler: { [weak self] _ in
                 self?.addSongInternal(url: url)
-                self?.processImport(urls: urls, index: index + 1)
+                
+                if shouldAutoLoad, let newSong = LibraryManager.shared.songs.last {
+                    self?.delegate?.libraryViewController(self!, didSelectSong: newSong)
+                    self?.dismiss(animated: true)
+                } else {
+                    self?.processImport(urls: urls, index: index + 1)
+                }
             }))
             present(alert, animated: true)
         } else {
             addSongInternal(url: url)
-            processImport(urls: urls, index: index + 1)
+            
+            if shouldAutoLoad, let newSong = LibraryManager.shared.songs.last {
+                delegate?.libraryViewController(self, didSelectSong: newSong)
+                dismiss(animated: true)
+            } else {
+                processImport(urls: urls, index: index + 1)
+            }
         }
     }
     
@@ -1676,6 +1823,7 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
 class SongTableViewCell: UITableViewCell {
     static let reuseIdentifier = "SongTableViewCell"
     
+    var songID: UUID?
     private let artworkImageView = UIImageView()
     private let titleLabel = UILabel()
     private let artistLabel = UILabel()
@@ -1726,12 +1874,17 @@ class SongTableViewCell: UITableViewCell {
         artworkImageView.image = artwork ?? UIImage(systemName: "music.note")
     }
     
+    func setArtwork(_ image: UIImage?) {
+        artworkImageView.image = image ?? UIImage(systemName: "music.note")
+    }
+    
     override func prepareForReuse() {
         super.prepareForReuse()
         artworkImageView.image = nil
         titleLabel.text = nil
         artistLabel.text = nil
         accessoryType = .none
+        songID = nil
     }
 }
 
@@ -1826,6 +1979,9 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
     
     // Library state
     private var currentSong: Song?
+    private var isShuffling = false
+    private var playbackQueue: [Song] = []
+    private var currentQueueIndex: Int = -1
     
     // MARK: View Lifecycle
     
@@ -2627,6 +2783,7 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
         settingsVC.isRememberSettingsEnabled = self.isRememberSettingsEnabled
         settingsVC.isAutoPlayNextEnabled = self.isAutoPlayNextEnabled
         settingsVC.isStepperEnabled = self.isStepperEnabled
+        settingsVC.isAutoLoadAddedSongEnabled = UserDefaults.standard.bool(forKey: "isAutoLoadAddedSongEnabled")
         
         // Embed the SettingsViewController in a UINavigationController to display a navigation bar
         let navController = UINavigationController(rootViewController: settingsVC)
@@ -2738,6 +2895,10 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
         self.isStepperEnabled = isEnabled
         UserDefaults.standard.set(isEnabled, forKey: "isStepperEnabled")
         updateStepperVisibility()
+    }
+    
+    func settingsViewController(_ controller: SettingsViewController, didChangeAutoLoadAddedSongState isEnabled: Bool) {
+        UserDefaults.standard.set(isEnabled, forKey: "isAutoLoadAddedSongEnabled")
     }
     
     /// Stops playback and resets the UI to the "No File Loaded" state.
@@ -3047,6 +3208,27 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
         impactFeedbackGenerator.impactOccurred()
     }
     
+    private func getSortedLibrarySongs() -> [Song] {
+        var songs = LibraryManager.shared.songs
+        let sortOptionKey = "librarySortOption"
+        let sortIndex = UserDefaults.standard.integer(forKey: sortOptionKey)
+        guard let sortOption = LibrarySortOption(rawValue: sortIndex) else { return songs }
+        
+        songs.sort { (song1, song2) in
+            switch sortOption {
+            case .title:
+                return song1.title.localizedCaseInsensitiveCompare(song2.title) == .orderedAscending
+            case .artist:
+                return (song1.artist ?? "").localizedCaseInsensitiveCompare(song2.artist ?? "") == .orderedAscending
+            case .album:
+                // Sort by album, then by title within the album
+                let albumComparison = (song1.album ?? "").localizedCaseInsensitiveCompare(song2.album ?? "")
+                return albumComparison == .orderedSame ? song1.title.localizedCaseInsensitiveCompare(song2.title) == .orderedAscending : albumComparison == .orderedAscending
+            }
+        }
+        return songs
+    }
+    
     private func loadSong(_ song: Song, andPlay: Bool) {
         guard let url = song.url else { return }
         self.currentSong = song
@@ -3132,7 +3314,24 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
     // MARK: LibraryViewControllerDelegate
     
     func libraryViewController(_ controller: LibraryViewController, didSelectSong song: Song) {
+        isShuffling = false
+        playbackQueue = []
+        currentQueueIndex = -1
         loadSong(song, andPlay: true)
+    }
+    
+    func libraryViewControllerDidTapShuffle(_ controller: LibraryViewController) {
+        let allSongs = LibraryManager.shared.songs
+        guard !allSongs.isEmpty else { return }
+        
+        isShuffling = true
+        playbackQueue = allSongs.shuffled()
+        currentQueueIndex = 0
+        
+        // Turn on auto play next and turn off repeat song
+        settingsViewController(SettingsViewController(), didChangeAutoPlayNextState: true)
+        settingsViewController(SettingsViewController(), didChangeLoopingState: false)
+        loadSong(playbackQueue[currentQueueIndex], andPlay: true)
     }
     
     @objc private func saveValuesTapped() {
@@ -3169,22 +3368,38 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
     // MARK: Playlist Navigation
     
     @objc private func playNextSong() {
-        let songs = LibraryManager.shared.songs
-        guard !songs.isEmpty, let current = currentSong, let index = songs.firstIndex(where: { $0.id == current.id }) else { return }
-        
-        let nextIndex = (index + 1) % songs.count
-        loadSong(songs[nextIndex], andPlay: true)
+        if isShuffling {
+            guard !playbackQueue.isEmpty else { return }
+            currentQueueIndex = (currentQueueIndex + 1) % playbackQueue.count
+            loadSong(playbackQueue[currentQueueIndex], andPlay: true)
+        } else {
+            let songs = getSortedLibrarySongs()
+            guard !songs.isEmpty, let current = currentSong, let index = songs.firstIndex(where: { $0.id == current.id }) else {
+                if !songs.isEmpty { loadSong(songs[0], andPlay: true) }
+                return
+            }
+            let nextIndex = (index + 1) % songs.count
+            loadSong(songs[nextIndex], andPlay: true)
+        }
         impactFeedbackGenerator.impactOccurred()
     }
     
     @objc private func playPreviousSong() {
-        let songs = LibraryManager.shared.songs
-        guard !songs.isEmpty, let current = currentSong, let index = songs.firstIndex(where: { $0.id == current.id }) else { return }
-        
-        var prevIndex = index - 1
-        if prevIndex < 0 { prevIndex = songs.count - 1 }
-        
-        loadSong(songs[prevIndex], andPlay: true)
+        if isShuffling {
+            guard !playbackQueue.isEmpty else { return }
+            currentQueueIndex -= 1
+            if currentQueueIndex < 0 { currentQueueIndex = playbackQueue.count - 1 }
+            loadSong(playbackQueue[currentQueueIndex], andPlay: true)
+        } else {
+            let songs = getSortedLibrarySongs()
+            guard !songs.isEmpty, let current = currentSong, let index = songs.firstIndex(where: { $0.id == current.id }) else {
+                if !songs.isEmpty { loadSong(songs[0], andPlay: true) }
+                return
+            }
+            var prevIndex = index - 1
+            if prevIndex < 0 { prevIndex = songs.count - 1 }
+            loadSong(songs[prevIndex], andPlay: true)
+        }
         impactFeedbackGenerator.impactOccurred()
     }
     
@@ -3332,7 +3547,8 @@ struct AudioEffectsApp: App {
             "isLoopingEnabled": false,
             "isRememberSettingsEnabled": false,
             "isAutoPlayNextEnabled": false,
-            "isStepperEnabled": false
+            "isStepperEnabled": false,
+            "isAutoLoadAddedSongEnabled": false
         ])
     }
     var body: some Scene {
