@@ -817,10 +817,17 @@ class SettingsViewController: UIViewController {
     private let showPresetsSwitch = UISwitch()
     private let showPresetsLabel = UILabel()
     
+    private let scanDuplicatesButton = UIButton(type: .system)
+    private let scanDuplicatesLabel = UILabel()
+    
     private let slowedReverbSpeedSegmentedControl = UISegmentedControl(items: ["0.80x", "0.85x", "0.90x"])
     private let slowedReverbSpeedLabel = UILabel()
     
     private var themeStack: UIStackView!
+    
+    private var interfaceGroups: [UIView] = []
+    private var themeGroups: [UIView] = []
+    private var extrasGroups: [UIView] = []
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -1069,6 +1076,24 @@ class SettingsViewController: UIViewController {
         showPresetsGroup.axis = .vertical
         showPresetsGroup.spacing = 4
         
+        // --- Scan Duplicates Setting ---
+        scanDuplicatesLabel.text = "Scan for Duplicates"
+        
+        var scanConfig = UIButton.Configuration.filled()
+        scanConfig.title = "Scan"
+        scanConfig.baseBackgroundColor = .systemBlue
+        scanConfig.baseForegroundColor = .white
+        scanConfig.contentInsets = NSDirectionalEdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12)
+        scanDuplicatesButton.configuration = scanConfig
+        scanDuplicatesButton.addTarget(self, action: #selector(scanDuplicatesTapped), for: .touchUpInside)
+        
+        let scanDuplicatesStack = UIStackView(arrangedSubviews: [scanDuplicatesLabel, scanDuplicatesButton])
+        scanDuplicatesStack.spacing = 20
+        let scanDuplicatesDescription = createDescriptionLabel(with: "Finds and removes duplicate songs based on title and artist.")
+        let scanDuplicatesGroup = UIStackView(arrangedSubviews: [scanDuplicatesStack, scanDuplicatesDescription])
+        scanDuplicatesGroup.axis = .vertical
+        scanDuplicatesGroup.spacing = 4
+        
         // --- Slowed + Reverb Speed Setting ---
         slowedReverbSpeedLabel.text = "Slowed Preset Speed"
         
@@ -1091,60 +1116,10 @@ class SettingsViewController: UIViewController {
         let slowedReverbSpeedGroup = UIStackView(arrangedSubviews: [slowedReverbSpeedStack, slowedReverbSpeedDescription])
         slowedReverbSpeedGroup.axis = .vertical
         slowedReverbSpeedGroup.spacing = 4
-
-        // --- Main Settings Stack ---
-        let settingsOptionsStack = UIStackView(arrangedSubviews: [
-            createHeaderLabel(with: "Modes"),
-            linkPitchGroup,
-            
-            createHeaderLabel(with: "Playback"),
-            loopingGroup,
-            autoPlayNextGroup,
-            
-            createHeaderLabel(with: "Accuracy"),
-            accuratePitchGroup,
-            preciseSpeedGroup,
-            
-            createHeaderLabel(with: "Interface"),
-            reverbSliderGroup,
-            eqGroup,
-            stepperGroup,
-            tapArtworkGroup,
-            resetSlidersOnTapGroup,
-            exportButtonGroup,
-            
-            createHeaderLabel(with: "Theme"),
-            dynamicThemeGroup,
-            albumArtGroup,
-            dynamicBackgroundGroup,
-            animatedBackgroundGroup,
-            
-            createHeaderLabel(with: "Extras"),
-            rememberSettingsGroup,
-            autoLoadAddedSongGroup,
-            showPresetsGroup,
-            slowedReverbSpeedGroup
-        ])
-        settingsOptionsStack.axis = .vertical
-        settingsOptionsStack.spacing = 25
-        settingsOptionsStack.translatesAutoresizingMaskIntoConstraints = false
         
-        // Create a content view inside the scroll view to hold all elements
-        let contentView = UIView()
-        contentView.translatesAutoresizingMaskIntoConstraints = false
-        scrollView.addSubview(contentView)
-        
-        contentView.addSubview(settingsOptionsStack)
-
-        NSLayoutConstraint.activate([
-            settingsOptionsStack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 20),
-            settingsOptionsStack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
-            settingsOptionsStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20)
-        ])
-        
-        // Theme Selection UI
+        // --- Theme Color Picker (Moved up for grouping) ---
         let themeTitleLabel = UILabel()
-        themeTitleLabel.text = "Theme"
+        themeTitleLabel.text = "Theme Color"
         themeTitleLabel.font = .systemFont(ofSize: 17, weight: .semibold)
         
         let colorButtonsStack = UIStackView()
@@ -1176,14 +1151,109 @@ class SettingsViewController: UIViewController {
         themeStack = UIStackView(arrangedSubviews: [themeTitleLabel, colorButtonsStack])
         themeStack.axis = .vertical
         themeStack.spacing = 15
-        themeStack.translatesAutoresizingMaskIntoConstraints = false
-        contentView.addSubview(themeStack)
+        themeStack.isHidden = isDynamicThemeEnabled
+        
+        // --- Grouping for Folders ---
+        interfaceGroups = [
+            reverbSliderGroup,
+            eqGroup,
+            stepperGroup,
+            tapArtworkGroup,
+            resetSlidersOnTapGroup,
+            exportButtonGroup
+        ]
+        
+        themeGroups = [
+            dynamicThemeGroup,
+            themeStack,
+            albumArtGroup,
+            dynamicBackgroundGroup,
+            animatedBackgroundGroup
+        ]
+        
+        extrasGroups = [
+            rememberSettingsGroup,
+            autoLoadAddedSongGroup,
+            showPresetsGroup,
+            slowedReverbSpeedGroup,
+            scanDuplicatesGroup
+        ]
+        
+        // --- Folder Buttons ---
+        func createFolderButton(title: String, action: Selector) -> UIView {
+            let container = UIView()
+            container.backgroundColor = .secondarySystemGroupedBackground
+            container.layer.cornerRadius = 10
+            
+            let label = UILabel()
+            label.text = title
+            label.font = .systemFont(ofSize: 17, weight: .semibold)
+            
+            let chevron = UIImageView(image: UIImage(systemName: "chevron.right"))
+            chevron.tintColor = .tertiaryLabel
+            chevron.contentMode = .scaleAspectFit
+            
+            let stack = UIStackView(arrangedSubviews: [label, UIView(), chevron])
+            stack.axis = .horizontal
+            stack.alignment = .center
+            stack.translatesAutoresizingMaskIntoConstraints = false
+            stack.isUserInteractionEnabled = false
+            
+            container.addSubview(stack)
+            NSLayoutConstraint.activate([
+                stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 16),
+                stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -16),
+                stack.topAnchor.constraint(equalTo: container.topAnchor, constant: 16),
+                stack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -16)
+            ])
+            
+            let tap = UITapGestureRecognizer(target: self, action: action)
+            container.addGestureRecognizer(tap)
+            
+            return container
+        }
+        
+        let interfaceFolder = createFolderButton(title: "Interface", action: #selector(openInterfaceSettings))
+        let themeFolder = createFolderButton(title: "Theme", action: #selector(openThemeSettings))
+        let extrasFolder = createFolderButton(title: "Extras", action: #selector(openExtrasSettings))
+
+        // --- Main Settings Stack ---
+        let settingsOptionsStack = UIStackView(arrangedSubviews: [
+            // Modes
+            linkPitchGroup,
+            
+            // Playback
+            loopingGroup,
+            autoPlayNextGroup,
+            
+            // Accuracy
+            accuratePitchGroup,
+            preciseSpeedGroup,
+            
+            // Folders
+            interfaceFolder,
+            themeFolder,
+            extrasFolder
+        ])
+        settingsOptionsStack.axis = .vertical
+        settingsOptionsStack.spacing = 25
+        settingsOptionsStack.translatesAutoresizingMaskIntoConstraints = false
+        
+        // Create a content view inside the scroll view to hold all elements
+        let contentView = UIView()
+        contentView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.addSubview(contentView)
+        
+        contentView.addSubview(settingsOptionsStack)
+
+        NSLayoutConstraint.activate([
+            settingsOptionsStack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 20),
+            settingsOptionsStack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
+            settingsOptionsStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20)
+        ])
         
         NSLayoutConstraint.activate([
-            themeStack.topAnchor.constraint(equalTo: settingsOptionsStack.bottomAnchor, constant: 40),
-            themeStack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
-            themeStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
-            themeStack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -20), // Important for contentSize
+            settingsOptionsStack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -20), // Important for contentSize
             
             // Content view constraints to scroll view
             contentView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
@@ -1192,9 +1262,6 @@ class SettingsViewController: UIViewController {
             contentView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
             contentView.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor) // Ensure vertical scrolling only
         ])
-        
-        // Initial state for theme picker
-        themeStack.isHidden = isDynamicThemeEnabled
     }
     
     @objc private func dismissSettings() {
@@ -1312,6 +1379,150 @@ class SettingsViewController: UIViewController {
         }
         UserDefaults.standard.set(speed, forKey: "slowedReverbSpeedPreset")
         impactFeedbackGenerator.impactOccurred()
+    }
+    
+    @objc private func scanDuplicatesTapped() {
+        let songs = LibraryManager.shared.songs
+        var duplicates: [Song] = []
+        var seen: Set<String> = []
+        
+        for song in songs {
+            let title = song.title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let artist = (song.artist ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let key = "\(title)|\(artist)"
+            
+            if seen.contains(key) {
+                duplicates.append(song)
+            } else {
+                seen.insert(key)
+            }
+        }
+        
+        guard !duplicates.isEmpty else {
+            let alert = UIAlertController(title: "No Duplicates", message: "Your library is clean.", preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: "OK", style: .default))
+            present(alert, animated: true)
+            return
+        }
+        
+        showDuplicateActionSheet(duplicates: duplicates)
+    }
+    
+    private func showDuplicateActionSheet(duplicates: [Song]) {
+        let message = "Found \(duplicates.count) duplicate song(s)."
+        let alert = UIAlertController(title: "Duplicates Found", message: message, preferredStyle: .actionSheet)
+        
+        alert.addAction(UIAlertAction(title: "Delete All Duplicates", style: .destructive, handler: { [weak self] _ in
+            self?.deleteAllDuplicates(duplicates)
+        }))
+        
+        alert.addAction(UIAlertAction(title: "Review One by One", style: .default, handler: { [weak self] _ in
+            self?.reviewDuplicates(duplicates)
+        }))
+        
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        
+        if let popover = alert.popoverPresentationController {
+            popover.sourceView = scanDuplicatesButton
+            popover.sourceRect = scanDuplicatesButton.bounds
+        }
+        
+        present(alert, animated: true)
+    }
+    
+    private func deleteAllDuplicates(_ duplicates: [Song]) {
+        let ids = duplicates.map { $0.id }
+        LibraryManager.shared.deleteSongs(withIDs: ids)
+        
+        let alert = UIAlertController(title: "Success", message: "Deleted \(duplicates.count) duplicates.", preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "OK", style: .default))
+        present(alert, animated: true)
+    }
+    
+    private func reviewDuplicates(_ duplicates: [Song], index: Int = 0) {
+        guard index < duplicates.count else {
+            let alert = UIAlertController(title: "Review Complete", message: "All duplicates processed.", preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: "OK", style: .default))
+            present(alert, animated: true)
+            return
+        }
+        
+        let song = duplicates[index]
+        let message = "Title: \(song.title)\nArtist: \(song.artist ?? "Unknown")"
+        
+        let alert = UIAlertController(title: "Duplicate (\(index + 1)/\(duplicates.count))", message: message, preferredStyle: .alert)
+        
+        alert.addAction(UIAlertAction(title: "Delete", style: .destructive, handler: { [weak self] _ in
+            LibraryManager.shared.deleteSongs(withIDs: [song.id])
+            self?.reviewDuplicates(duplicates, index: index + 1)
+        }))
+        
+        alert.addAction(UIAlertAction(title: "Skip", style: .default, handler: { [weak self] _ in
+            self?.reviewDuplicates(duplicates, index: index + 1)
+        }))
+        
+        alert.addAction(UIAlertAction(title: "Delete All Remaining", style: .destructive, handler: { [weak self] _ in
+            let remaining = Array(duplicates[index...])
+            self?.deleteAllDuplicates(remaining)
+        }))
+        
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        
+        present(alert, animated: true)
+    }
+    
+    @objc private func openInterfaceSettings() {
+        let vc = SubSettingsViewController()
+        vc.title = "Interface"
+        vc.contentViews = interfaceGroups
+        navigationController?.pushViewController(vc, animated: true)
+    }
+    
+    @objc private func openThemeSettings() {
+        let vc = SubSettingsViewController()
+        vc.title = "Theme"
+        vc.contentViews = themeGroups
+        navigationController?.pushViewController(vc, animated: true)
+    }
+    
+    @objc private func openExtrasSettings() {
+        let vc = SubSettingsViewController()
+        vc.title = "Extras"
+        vc.contentViews = extrasGroups
+        navigationController?.pushViewController(vc, animated: true)
+    }
+}
+
+class SubSettingsViewController: UIViewController {
+    var contentViews: [UIView] = []
+    private let scrollView = UIScrollView()
+    
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .systemGroupedBackground
+        
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(scrollView)
+        
+        let stackView = UIStackView(arrangedSubviews: contentViews)
+        stackView.axis = .vertical
+        stackView.spacing = 25
+        stackView.translatesAutoresizingMaskIntoConstraints = false
+        
+        scrollView.addSubview(stackView)
+        
+        NSLayoutConstraint.activate([
+            scrollView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            
+            stackView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor, constant: 20),
+            stackView.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor, constant: 20),
+            stackView.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor, constant: -20),
+            stackView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor, constant: -20),
+            stackView.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor, constant: -40)
+        ])
     }
 }
 
