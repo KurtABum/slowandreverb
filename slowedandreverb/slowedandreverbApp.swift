@@ -1403,6 +1403,25 @@ private enum LibrarySortOption: Int, CaseIterable {
         case .album: return "Album"
         }
     }
+
+    func areInIncreasingOrder(_ song1: Song, _ song2: Song) -> Bool {
+        switch self {
+        case .title:
+            let titleComp = song1.title.localizedCaseInsensitiveCompare(song2.title)
+            if titleComp != .orderedSame { return titleComp == .orderedAscending }
+            return (song1.artist ?? "").localizedCaseInsensitiveCompare(song2.artist ?? "") == .orderedAscending
+        case .artist:
+            let artistComp = (song1.artist ?? "").localizedCaseInsensitiveCompare(song2.artist ?? "")
+            if artistComp != .orderedSame { return artistComp == .orderedAscending }
+            let albumComp = (song1.album ?? "").localizedCaseInsensitiveCompare(song2.album ?? "")
+            if albumComp != .orderedSame { return albumComp == .orderedAscending }
+            return song1.title.localizedCaseInsensitiveCompare(song2.title) == .orderedAscending
+        case .album:
+            let albumComp = (song1.album ?? "").localizedCaseInsensitiveCompare(song2.album ?? "")
+            if albumComp != .orderedSame { return albumComp == .orderedAscending }
+            return song1.title.localizedCaseInsensitiveCompare(song2.title) == .orderedAscending
+        }
+    }
 }
 
 class LibraryViewController: UIViewController, UITableViewDataSource, UITableViewDelegate, UITableViewDataSourcePrefetching, UIDocumentPickerDelegate, UISearchResultsUpdating {
@@ -1595,18 +1614,7 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
         let sortIndex = UserDefaults.standard.integer(forKey: sortOptionKey)
         guard let sortOption = LibrarySortOption(rawValue: sortIndex) else { return }
         
-        displayedSongs.sort { (song1, song2) in
-            switch sortOption {
-            case .title:
-                return song1.title.localizedCaseInsensitiveCompare(song2.title) == .orderedAscending
-            case .artist:
-                return (song1.artist ?? "").localizedCaseInsensitiveCompare(song2.artist ?? "") == .orderedAscending
-            case .album:
-                // Sort by album, then by title within the album
-                let albumComparison = (song1.album ?? "").localizedCaseInsensitiveCompare(song2.album ?? "")
-                return albumComparison == .orderedSame ? song1.title.localizedCaseInsensitiveCompare(song2.title) == .orderedAscending : albumComparison == .orderedAscending
-            }
-        }
+        displayedSongs.sort(by: sortOption.areInIncreasingOrder)
         updateSections()
     }
     
@@ -3383,18 +3391,7 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
         let sortIndex = UserDefaults.standard.integer(forKey: sortOptionKey)
         guard let sortOption = LibrarySortOption(rawValue: sortIndex) else { return songs }
         
-        songs.sort { (song1, song2) in
-            switch sortOption {
-            case .title:
-                return song1.title.localizedCaseInsensitiveCompare(song2.title) == .orderedAscending
-            case .artist:
-                return (song1.artist ?? "").localizedCaseInsensitiveCompare(song2.artist ?? "") == .orderedAscending
-            case .album:
-                // Sort by album, then by title within the album
-                let albumComparison = (song1.album ?? "").localizedCaseInsensitiveCompare(song2.album ?? "")
-                return albumComparison == .orderedSame ? song1.title.localizedCaseInsensitiveCompare(song2.title) == .orderedAscending : albumComparison == .orderedAscending
-            }
-        }
+        songs.sort(by: sortOption.areInIncreasingOrder)
         return songs
     }
     
