@@ -1378,7 +1378,7 @@ private enum LibrarySortOption: Int, CaseIterable {
     }
 }
 
-class LibraryViewController: UIViewController, UITableViewDataSource, UITableViewDelegate, UIDocumentPickerDelegate, UISearchResultsUpdating {
+class LibraryViewController: UIViewController, UITableViewDataSource, UITableViewDelegate, UITableViewDataSourcePrefetching, UIDocumentPickerDelegate, UISearchResultsUpdating {
     
     weak var delegate: LibraryViewControllerDelegate?
     var currentSongID: UUID?
@@ -1441,8 +1441,11 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
         tableView.translatesAutoresizingMaskIntoConstraints = false
         tableView.dataSource = self
         tableView.delegate = self
+        tableView.prefetchDataSource = self
         tableView.register(SongTableViewCell.self, forCellReuseIdentifier: SongTableViewCell.reuseIdentifier)
         tableView.rowHeight = 60
+        // Disable prefetch during search for better performance
+        tableView.isPrefetchingEnabled = true
         view.addSubview(tableView)
         
         NSLayoutConstraint.activate([
@@ -1625,12 +1628,21 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
     
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         guard let cell = tableView.dequeueReusableCell(withIdentifier: SongTableViewCell.reuseIdentifier, for: indexPath) as? SongTableViewCell else {
-            return UITableViewCell()
+            // Return a properly configured fallback cell
+            let fallbackCell = UITableViewCell(style: .subtitle, reuseIdentifier: nil)
+            return fallbackCell
         }
+        
+        // Bounds checking: ensure indexPath is valid
+        guard indexPath.section < sections.count,
+              indexPath.row < sections[indexPath.section].songs.count else {
+            return cell
+        }
+        
         let song = sections[indexPath.section].songs[indexPath.row]
         cell.songID = song.id
         
-        // Configure with placeholder initially
+        // Configure with title and artist
         cell.configure(with: nil, title: song.title, artist: song.artist)
         
         // Highlight the currently playing song
@@ -1639,24 +1651,36 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
             cell.tintColor = view.tintColor
         } else {
             cell.accessoryType = .none
+            cell.tintColor = .systemBlue
         }
         
         // Load artwork asynchronously with caching
         let cacheKey = song.id.uuidString as NSString
         if let cachedImage = artworkCache.object(forKey: cacheKey) {
+            // Use cached image immediately
             cell.setArtwork(cachedImage)
         } else if let url = song.url {
+            // Load artwork asynchronously
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                guard let self = self else { return }
+                
                 let asset = AVAsset(url: url)
                 var artwork: UIImage?
-                if let artworkItem = asset.commonMetadata.first(where: { $0.commonKey == .commonKeyArtwork }), let data = artworkItem.dataValue {
+                
+                if let artworkItem = asset.commonMetadata.first(where: { $0.commonKey == .commonKeyArtwork }), 
+                   let data = artworkItem.dataValue {
                     artwork = UIImage(data: data)
                 }
                 
                 if let image = artwork {
-                    self?.artworkCache.setObject(image, forKey: cacheKey)
+                    self.artworkCache.setObject(image, forKey: cacheKey)
+                    
+                    // Only update cell if it's still visible and shows the same song
                     DispatchQueue.main.async {
-                        if cell.songID == song.id {
+                        // Check if the cell is still visible and hasn't been reused
+                        if cell.songID == song.id, 
+                           let visibleCell = tableView.cellForRow(at: indexPath) as? SongTableViewCell,
+                           visibleCell === cell {
                             cell.setArtwork(image)
                         }
                     }
@@ -1665,6 +1689,57 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
         }
         
         return cell
+    }
+    
+    // MARK: - UITableViewDataSourcePrefetching
+    
+    func tableView(_ tableView: UITableView, prefetchRowsAt indexPaths: [IndexPath]) {
+        // Prefetch artwork for upcoming cells to ensure smooth scrolling
+        for indexPath in indexPaths {
+            guard indexPath.section < sections.count,
+                  indexPath.row < sections[indexPath.section].songs.count else { continue }
+            
+            let song = sections[indexPath.section].songs[indexPath.row]
+            let cacheKey = song.id.uuidString as NSString
+            
+            // Skip if already cached
+            if artworkCache.object(forKey: cacheKey) != nil { continue }
+            
+            // Prefetch artwork asynchronously
+            if let url = song.url {
+                DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                    guard let self = self else { return }
+                    
+                    let asset = AVAsset(url: url)
+                    if let artworkItem = asset.commonMetadata.first(where: { $0.commonKey == .commonKeyArtwork }),
+                       let data = artworkItem.dataValue,
+                       let image = UIImage(data: data) {
+                        self.artworkCache.setObject(image, forKey: cacheKey)
+                    }
+                }
+            }
+        }
+    }
+    
+    func tableView(_ tableView: UITableView, cancelPrefetchingForRowsAt indexPaths: [IndexPath]) {
+        // Optional: handle cancellation if needed
+    }
+    
+    func tableView(_ tableView: UITableView, willDisplay cell: UITableViewCell, forRowAt indexPath: IndexPath) {
+        // Ensure cell configuration is complete before display
+        guard let songCell = cell as? SongTableViewCell else { return }
+        
+        // Bounds check
+        guard indexPath.section < sections.count,
+              indexPath.row < sections[indexPath.section].songs.count else { return }
+        
+        let song = sections[indexPath.section].songs[indexPath.row]
+        
+        // If artwork is cached, display it immediately
+        let cacheKey = song.id.uuidString as NSString
+        if let cachedImage = artworkCache.object(forKey: cacheKey) {
+            songCell.setArtwork(cachedImage)
+        }
     }
     
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
@@ -1827,14 +1902,22 @@ class SongTableViewCell: UITableViewCell {
     private let artworkImageView = UIImageView()
     private let titleLabel = UILabel()
     private let artistLabel = UILabel()
+    private var isConfigured = false
     
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
         setupCellUI()
+        setupBackgroundConfiguration()
     }
     
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+    
+    private func setupBackgroundConfiguration() {
+        // Set explicit background configuration to prevent nil configuration errors during rapid scrolling
+        var defaultConfig = UIBackgroundConfiguration.listGroupedCell()
+        backgroundConfiguration = defaultConfig
     }
     
     private func setupCellUI() {
@@ -1846,8 +1929,10 @@ class SongTableViewCell: UITableViewCell {
         contentView.addSubview(artworkImageView)
         
         titleLabel.font = .systemFont(ofSize: 16, weight: .medium)
+        titleLabel.text = nil  // Initialize with nil
         artistLabel.font = .systemFont(ofSize: 14)
         artistLabel.textColor = .secondaryLabel
+        artistLabel.text = nil  // Initialize with nil
         
         let textStack = UIStackView(arrangedSubviews: [titleLabel, artistLabel])
         textStack.translatesAutoresizingMaskIntoConstraints = false
@@ -1868,10 +1953,14 @@ class SongTableViewCell: UITableViewCell {
     }
     
     func configure(with artwork: UIImage?, title: String, artist: String?) {
+        // Guard against nil or empty values
+        guard !title.isEmpty else { return }
+        
         titleLabel.text = title
         artistLabel.text = artist
-        artistLabel.isHidden = artist == nil
+        artistLabel.isHidden = (artist?.isEmpty ?? true)
         artworkImageView.image = artwork ?? UIImage(systemName: "music.note")
+        isConfigured = true
     }
     
     func setArtwork(_ image: UIImage?) {
@@ -1880,11 +1969,23 @@ class SongTableViewCell: UITableViewCell {
     
     override func prepareForReuse() {
         super.prepareForReuse()
+        // Cancel any pending operations
+        artworkImageView.layer.removeAllAnimations()
+        
+        // Reset all UI elements to initial state
         artworkImageView.image = nil
         titleLabel.text = nil
         artistLabel.text = nil
+        artistLabel.isHidden = true
         accessoryType = .none
+        tintColor = .systemBlue  // Reset to default
+        
+        // Reset state flags
         songID = nil
+        isConfigured = false
+        
+        // Re-establish background configuration
+        setupBackgroundConfiguration()
     }
 }
 
