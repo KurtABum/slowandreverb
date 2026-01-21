@@ -1446,6 +1446,7 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
         tableView.rowHeight = 60
         // Disable prefetch during search for better performance
         tableView.isPrefetchingEnabled = true
+        tableView.backgroundColor = .clear
         view.addSubview(tableView)
         
         NSLayoutConstraint.activate([
@@ -1667,7 +1668,7 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
                 let asset = AVAsset(url: url)
                 var artwork: UIImage?
                 
-                if let artworkItem = asset.commonMetadata.first(where: { $0.commonKey == .commonKeyArtwork }), 
+                if let artworkItem = asset.commonMetadata.first(where: { $0.commonKey == .commonKeyArtwork }),
                    let data = artworkItem.dataValue {
                     artwork = UIImage(data: data)
                 }
@@ -1678,7 +1679,7 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
                     // Only update cell if it's still visible and shows the same song
                     DispatchQueue.main.async {
                         // Check if the cell is still visible and hasn't been reused
-                        if cell.songID == song.id, 
+                        if cell.songID == song.id,
                            let visibleCell = tableView.cellForRow(at: indexPath) as? SongTableViewCell,
                            visibleCell === cell {
                             cell.setArtwork(image)
@@ -1916,8 +1917,9 @@ class SongTableViewCell: UITableViewCell {
     
     private func setupBackgroundConfiguration() {
         // Set explicit background configuration to prevent nil configuration errors during rapid scrolling
-        var defaultConfig = UIBackgroundConfiguration.listGroupedCell()
+        var defaultConfig = UIBackgroundConfiguration.clear()
         backgroundConfiguration = defaultConfig
+        backgroundColor = .clear
     }
     
     private func setupCellUI() {
