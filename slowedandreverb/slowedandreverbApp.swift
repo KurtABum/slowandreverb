@@ -1944,27 +1944,40 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
     }
     
     private func addSongInternal(url: URL) {
-            if (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
-                // Handle folder
-                // For simplicity in this refactor, we'll just process the folder content
-                // A recursive function would be better but keeping it simple
-                // NOTE: Accessing folder contents requires security scope which we handle in addSong if needed,
-                // but here we might need to enumerate.
-                // For now, let's assume user picks files or we'd need a recursive folder adder.
-                // Given the constraint, let's just try to add the folder URL and let LibraryManager handle it?
-                // LibraryManager.addSong expects a file URL.
-                // Let's implement a simple folder scanner here.
-                if url.startAccessingSecurityScopedResource() {
-                    defer { url.stopAccessingSecurityScopedResource() }
-                    if let contents = try? FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: nil, options: .skipsHiddenFiles) {
-                        for fileURL in contents {
-                             LibraryManager.shared.addSong(from: fileURL)
+        let isDirectory = (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
+        
+        if isDirectory {
+            let fileManager = FileManager.default
+            let secured = url.startAccessingSecurityScopedResource()
+            defer { if secured { url.stopAccessingSecurityScopedResource() } }
+            
+            guard let enumerator = fileManager.enumerator(at: url, includingPropertiesForKeys: [.isDirectoryKey, .contentTypeKey], options: [.skipsHiddenFiles]) else { return }
+            
+            for case let fileURL as URL in enumerator {
+                do {
+                    let resourceValues = try fileURL.resourceValues(forKeys: [.isDirectoryKey, .contentTypeKey])
+                    if resourceValues.isDirectory == true { continue }
+                    
+                    var isAudio = false
+                    if let contentType = resourceValues.contentType, contentType.conforms(to: .audio) {
+                        isAudio = true
+                    } else {
+                        let ext = fileURL.pathExtension.lowercased()
+                        if ["mp3", "m4a", "wav", "aif", "aiff", "aac", "flac", "m4b"].contains(ext) {
+                            isAudio = true
                         }
                     }
+                    
+                    if isAudio {
+                        LibraryManager.shared.addSong(from: fileURL)
+                    }
+                } catch {
+                    print("Error processing file in folder: \(error)")
                 }
-            } else {
-                LibraryManager.shared.addSong(from: url)
             }
+        } else {
+            LibraryManager.shared.addSong(from: url)
+        }
     }
 }
 
