@@ -733,7 +733,9 @@ protocol SettingsViewControllerDelegate: AnyObject {
     func settingsViewController(_ controller: SettingsViewController, didChangeAutoPlayNextState isEnabled: Bool)
     func settingsViewController(_ controller: SettingsViewController, didChangeStepperState isEnabled: Bool)
     func settingsViewController(_ controller: SettingsViewController, didChangeAutoLoadAddedSongState isEnabled: Bool)
+    func settingsViewController(_ controller: SettingsViewController, didChangeShowPresetsState isEnabled: Bool)
 }
+
 
 /// A simple view controller to display app settings.
 class SettingsViewController: UIViewController {
@@ -756,6 +758,7 @@ class SettingsViewController: UIViewController {
     var isAutoPlayNextEnabled: Bool = false
     var isStepperEnabled: Bool = false
     var isAutoLoadAddedSongEnabled: Bool = false
+    var isShowPresetsEnabled: Bool = false
     private let impactFeedbackGenerator = UIImpactFeedbackGenerator(style: .light)
     
     private let scrollView = UIScrollView()
@@ -811,6 +814,9 @@ class SettingsViewController: UIViewController {
     private let autoLoadAddedSongSwitch = UISwitch()
     private let autoLoadAddedSongLabel = UILabel()
     
+    private let showPresetsSwitch = UISwitch()
+    private let showPresetsLabel = UILabel()
+    
     private var themeStack: UIStackView!
 
     override func viewDidLoad() {
@@ -819,6 +825,9 @@ class SettingsViewController: UIViewController {
         title = "Settings"
         impactFeedbackGenerator.prepare()
         navigationItem.rightBarButtonItem = UIBarButtonItem(barButtonSystemItem: .close, target: self, action: #selector(dismissSettings))
+        // Load show presets state
+        isShowPresetsEnabled = UserDefaults.standard.bool(forKey: "isShowPresetsEnabled")
+        showPresetsSwitch.isOn = isShowPresetsEnabled
     }
 
     private func setupUI() {
@@ -1045,6 +1054,17 @@ class SettingsViewController: UIViewController {
         let autoLoadAddedSongGroup = UIStackView(arrangedSubviews: [autoLoadAddedSongStack, autoLoadAddedSongDescription])
         autoLoadAddedSongGroup.axis = .vertical
         autoLoadAddedSongGroup.spacing = 4
+        
+        // --- Show Presets Setting ---
+        showPresetsLabel.text = "Show Presets"
+        showPresetsSwitch.isOn = isShowPresetsEnabled
+        showPresetsSwitch.addTarget(self, action: #selector(showPresetsSwitchChanged), for: .valueChanged)
+        let showPresetsStack = UIStackView(arrangedSubviews: [showPresetsLabel, showPresetsSwitch])
+        showPresetsStack.spacing = 20
+        let showPresetsDescription = createDescriptionLabel(with: "Shows quick preset buttons for 'Slowed + Reverb' and 'Sped Up' audio effects.")
+        let showPresetsGroup = UIStackView(arrangedSubviews: [showPresetsStack, showPresetsDescription])
+        showPresetsGroup.axis = .vertical
+        showPresetsGroup.spacing = 4
 
         // --- Main Settings Stack ---
         let settingsOptionsStack = UIStackView(arrangedSubviews: [
@@ -1075,7 +1095,8 @@ class SettingsViewController: UIViewController {
             
             createHeaderLabel(with: "Extras"),
             rememberSettingsGroup,
-            autoLoadAddedSongGroup
+            autoLoadAddedSongGroup,
+            showPresetsGroup
         ])
         settingsOptionsStack.axis = .vertical
         settingsOptionsStack.spacing = 25
@@ -1246,6 +1267,12 @@ class SettingsViewController: UIViewController {
     
     @objc private func autoLoadAddedSongSwitchChanged(_ sender: UISwitch) {
         delegate?.settingsViewController(self, didChangeAutoLoadAddedSongState: sender.isOn)
+        impactFeedbackGenerator.impactOccurred()
+    }
+    
+    @objc private func showPresetsSwitchChanged(_ sender: UISwitch) {
+        delegate?.settingsViewController(self, didChangeShowPresetsState: sender.isOn)
+        UserDefaults.standard.set(sender.isOn, forKey: "isShowPresetsEnabled")
         impactFeedbackGenerator.impactOccurred()
     }
 }
@@ -2056,6 +2083,11 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
     private let resetButton = UIButton(type: .system)
     private let exportButton = UIButton(type: .system)
     
+    // Preset Buttons
+    private let slowedReverbButton = UIButton(type: .system)
+    private let spedUpButton = UIButton(type: .system)
+    private var presetsStack: UIStackView!
+    
     // New buttons for rewind and skip
     private let rewindButton = UIButton(type: .system)
     private let skipButton = UIButton(type: .system)
@@ -2079,6 +2111,7 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
     private var isRememberSettingsEnabled = false
     private var isAutoPlayNextEnabled = false
     private var isStepperEnabled = false
+    private var isShowPresetsEnabled = false
     
     // Library state
     private var currentSong: Song?
@@ -2097,6 +2130,7 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
         self.isRememberSettingsEnabled = UserDefaults.standard.bool(forKey: "isRememberSettingsEnabled")
         self.isAutoPlayNextEnabled = UserDefaults.standard.bool(forKey: "isAutoPlayNextEnabled")
         self.isStepperEnabled = UserDefaults.standard.bool(forKey: "isStepperEnabled")
+        self.isShowPresetsEnabled = UserDefaults.standard.bool(forKey: "isShowPresetsEnabled")
         
         super.viewDidLoad()
         overrideUserInterfaceStyle = .dark // Lock the app in dark mode
@@ -2361,6 +2395,30 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
         exportButtonConfig.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 20, bottom: 12, trailing: 20)
         exportButton.configuration = exportButtonConfig
         exportButton.addTarget(self, action: #selector(exportTapped), for: .touchUpInside)
+        
+        // Preset Buttons Setup
+        var slowedReverbConfig = UIButton.Configuration.filled()
+        slowedReverbConfig.title = "Slowed + Reverb"
+        slowedReverbConfig.baseBackgroundColor = .secondarySystemFill
+        slowedReverbConfig.baseForegroundColor = .label
+        slowedReverbConfig.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 20, bottom: 12, trailing: 20)
+        slowedReverbButton.configuration = slowedReverbConfig
+        slowedReverbButton.addTarget(self, action: #selector(applySlowedReverbPreset), for: .touchUpInside)
+        
+        var spedUpConfig = UIButton.Configuration.filled()
+        spedUpConfig.title = "Sped Up"
+        spedUpConfig.baseBackgroundColor = .secondarySystemFill
+        spedUpConfig.baseForegroundColor = .label
+        spedUpConfig.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 20, bottom: 12, trailing: 20)
+        spedUpButton.configuration = spedUpConfig
+        spedUpButton.addTarget(self, action: #selector(applySpedUpPreset), for: .touchUpInside)
+        
+        // Horizontal stack for Preset buttons
+        presetsStack = UIStackView(arrangedSubviews: [slowedReverbButton, spedUpButton])
+        presetsStack.axis = .horizontal
+        presetsStack.spacing = 20
+        presetsStack.distribution = .fillEqually
+        presetsStack.isHidden = !isShowPresetsEnabled
 
         // Horizontal stack for Reset and Export buttons
         let actionButtonsStack = UIStackView(arrangedSubviews: [resetButton, exportButton])
@@ -2381,6 +2439,7 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
             midsControlStack,
             trebleControlStack,
             UIView(), // Spacer
+            presetsStack,
             saveValuesButton,
             actionButtonsStack,
         ])
@@ -2396,6 +2455,7 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
         stackView.setCustomSpacing(12, after: midsControlStack)
         stackView.setCustomSpacing(20, after: trebleControlStack)
         stackView.setCustomSpacing(10, after: saveValuesButton)
+        stackView.setCustomSpacing(40, after: presetsStack)
         
         // The spacer view should have a low-priority constraint to allow it to shrink
         if let spacer = stackView.arrangedSubviews[7] as? UIView {
@@ -2468,7 +2528,8 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
             // Make sliders and button take up more width
             progressStack.widthAnchor.constraint(equalTo: stackView.widthAnchor),
             actionButtonsStack.widthAnchor.constraint(equalTo: stackView.widthAnchor),
-            saveValuesButton.widthAnchor.constraint(equalTo: stackView.widthAnchor)
+            saveValuesButton.widthAnchor.constraint(equalTo: stackView.widthAnchor),
+            presetsStack.widthAnchor.constraint(equalTo: stackView.widthAnchor)
         ])
         
         // Constraints for the new playback control buttons
@@ -3004,6 +3065,11 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
         UserDefaults.standard.set(isEnabled, forKey: "isAutoLoadAddedSongEnabled")
     }
     
+    func settingsViewController(_ controller: SettingsViewController, didChangeShowPresetsState isEnabled: Bool) {
+        self.isShowPresetsEnabled = isEnabled
+        presetsStack.isHidden = !isEnabled
+    }
+    
     /// Stops playback and resets the UI to the "No File Loaded" state.
     private func clearCurrentSongAndStopPlayback() {
         if audioProcessor.isCurrentlyPlaying() {
@@ -3443,6 +3509,26 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
         song.savedSpeed = speedSlider.value
         song.savedReverb = reverbSlider.value
         LibraryManager.shared.updateSong(song)
+        impactFeedbackGenerator.impactOccurred()
+    }
+    
+    @objc private func applySlowedReverbPreset() {
+        speedSlider.setValue(0.8, animated: true)
+        speedSliderChanged(speedSlider)
+        
+        reverbSlider.setValue(40.0, animated: true)
+        reverbSliderChanged(reverbSlider)
+        
+        impactFeedbackGenerator.impactOccurred()
+    }
+
+    @objc private func applySpedUpPreset() {
+        speedSlider.setValue(1.2, animated: true)
+        speedSliderChanged(speedSlider)
+        
+        reverbSlider.setValue(0.0, animated: true)
+        reverbSliderChanged(reverbSlider)
+        
         impactFeedbackGenerator.impactOccurred()
     }
 
