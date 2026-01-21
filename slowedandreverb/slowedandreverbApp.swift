@@ -3612,6 +3612,14 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
     }
     
     @objc private func playPreviousSong() {
+        if audioProcessor.getCurrentTime() > 5.0 {
+            audioProcessor.seek(to: 0)
+            progressSlider.value = 0
+            currentTimeLabel.text = formatTime(seconds: 0)
+            impactFeedbackGenerator.impactOccurred()
+            return
+        }
+        
         if isShuffling {
             guard !playbackQueue.isEmpty else { return }
             currentQueueIndex -= 1
