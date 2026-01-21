@@ -817,6 +817,9 @@ class SettingsViewController: UIViewController {
     private let showPresetsSwitch = UISwitch()
     private let showPresetsLabel = UILabel()
     
+    private let slowedReverbSpeedSegmentedControl = UISegmentedControl(items: ["0.80x", "0.85x", "0.90x"])
+    private let slowedReverbSpeedLabel = UILabel()
+    
     private var themeStack: UIStackView!
 
     override func viewDidLoad() {
@@ -1065,6 +1068,29 @@ class SettingsViewController: UIViewController {
         let showPresetsGroup = UIStackView(arrangedSubviews: [showPresetsStack, showPresetsDescription])
         showPresetsGroup.axis = .vertical
         showPresetsGroup.spacing = 4
+        
+        // --- Slowed + Reverb Speed Setting ---
+        slowedReverbSpeedLabel.text = "Slowed Preset Speed"
+        
+        let savedSpeed = UserDefaults.standard.float(forKey: "slowedReverbSpeedPreset")
+        let currentSpeed = savedSpeed > 0 ? savedSpeed : 0.8
+        
+        if abs(currentSpeed - 0.9) < 0.01 {
+            slowedReverbSpeedSegmentedControl.selectedSegmentIndex = 2
+        } else if abs(currentSpeed - 0.85) < 0.01 {
+            slowedReverbSpeedSegmentedControl.selectedSegmentIndex = 1
+        } else {
+            slowedReverbSpeedSegmentedControl.selectedSegmentIndex = 0
+        }
+        
+        slowedReverbSpeedSegmentedControl.addTarget(self, action: #selector(slowedReverbSpeedChanged), for: .valueChanged)
+        
+        let slowedReverbSpeedStack = UIStackView(arrangedSubviews: [slowedReverbSpeedLabel, slowedReverbSpeedSegmentedControl])
+        slowedReverbSpeedStack.spacing = 20
+        let slowedReverbSpeedDescription = createDescriptionLabel(with: "Select the speed used for the 'Slowed + Reverb' preset.")
+        let slowedReverbSpeedGroup = UIStackView(arrangedSubviews: [slowedReverbSpeedStack, slowedReverbSpeedDescription])
+        slowedReverbSpeedGroup.axis = .vertical
+        slowedReverbSpeedGroup.spacing = 4
 
         // --- Main Settings Stack ---
         let settingsOptionsStack = UIStackView(arrangedSubviews: [
@@ -1096,7 +1122,8 @@ class SettingsViewController: UIViewController {
             createHeaderLabel(with: "Extras"),
             rememberSettingsGroup,
             autoLoadAddedSongGroup,
-            showPresetsGroup
+            showPresetsGroup,
+            slowedReverbSpeedGroup
         ])
         settingsOptionsStack.axis = .vertical
         settingsOptionsStack.spacing = 25
@@ -1273,6 +1300,17 @@ class SettingsViewController: UIViewController {
     @objc private func showPresetsSwitchChanged(_ sender: UISwitch) {
         delegate?.settingsViewController(self, didChangeShowPresetsState: sender.isOn)
         UserDefaults.standard.set(sender.isOn, forKey: "isShowPresetsEnabled")
+        impactFeedbackGenerator.impactOccurred()
+    }
+    
+    @objc private func slowedReverbSpeedChanged(_ sender: UISegmentedControl) {
+        let speed: Float
+        switch sender.selectedSegmentIndex {
+        case 1: speed = 0.85
+        case 2: speed = 0.90
+        default: speed = 0.80
+        }
+        UserDefaults.standard.set(speed, forKey: "slowedReverbSpeedPreset")
         impactFeedbackGenerator.impactOccurred()
     }
 }
@@ -3510,7 +3548,10 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
     }
     
     @objc private func applySlowedReverbPreset() {
-        speedSlider.setValue(0.8, animated: true)
+        let savedSpeed = UserDefaults.standard.float(forKey: "slowedReverbSpeedPreset")
+        let targetSpeed = savedSpeed > 0 ? savedSpeed : 0.8
+        
+        speedSlider.setValue(targetSpeed, animated: true)
         speedSliderChanged(speedSlider)
         
         reverbSlider.setValue(40.0, animated: true)
@@ -3734,7 +3775,8 @@ struct AudioEffectsApp: App {
             "isRememberSettingsEnabled": false,
             "isAutoPlayNextEnabled": false,
             "isStepperEnabled": false,
-            "isAutoLoadAddedSongEnabled": false
+            "isAutoLoadAddedSongEnabled": false,
+            "slowedReverbSpeedPreset": 0.8
         ])
     }
     var body: some Scene {
