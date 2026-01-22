@@ -1852,7 +1852,8 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
             displayedSongs = LibraryManager.shared.songs.filter { (song: Song) -> Bool in
                 let titleMatch = song.title.range(of: searchText, options: .caseInsensitive) != nil
                 let artistMatch = (song.artist ?? "").range(of: searchText, options: .caseInsensitive) != nil
-                return titleMatch || artistMatch
+                let albumMatch = (song.album ?? "").range(of: searchText, options: .caseInsensitive) != nil
+                return titleMatch || artistMatch || albumMatch
             }
         }
         sortSongs()
