@@ -29,6 +29,8 @@ class AudioProcessor {
     
     private var audioFile: AVAudioFile?
     private var currentTitle: String?
+    private var currentArtist: String?
+    private var currentArtwork: UIImage?
     private var isPlaying = false
     
     // Properties for progress tracking
@@ -189,6 +191,8 @@ class AudioProcessor {
 
             let title = songTitle ?? url.deletingPathExtension().lastPathComponent
             self.currentTitle = title
+            self.currentArtist = artistName
+            self.currentArtwork = artworkImage
             
             print("Audio file loaded: \(title)")
             return (title: title, artist: artistName, artwork: artworkImage)
@@ -198,6 +202,8 @@ class AudioProcessor {
             self.audioFile = nil
             self.nowPlayingInfo = nil // Clear info on failure
             self.currentTitle = nil
+            self.currentArtist = nil
+            self.currentArtwork = nil
             return nil
         }
     }
@@ -601,7 +607,7 @@ class AudioProcessor {
             ]
             
             // Create the output file using the AAC settings.
-            let outputFile = try AVAudioFile(forWriting: outputURL, settings: settings)
+            var outputFile: AVAudioFile? = try AVAudioFile(forWriting: outputURL, settings: settings)
             
             // Schedule the entire source file for rendering
             playerNode.scheduleFile(sourceFile, at: nil, completionHandler: nil)
@@ -622,7 +628,7 @@ class AudioProcessor {
                 
                 switch status {
                 case .success:
-                    try outputFile.write(from: buffer)
+                    try outputFile?.write(from: buffer)
                     let p = Float(engine.manualRenderingSampleTime) / Float(sourceFile.length)
                     progress?(p)
                 case .cannotDoInCurrentContext:
@@ -633,6 +639,9 @@ class AudioProcessor {
                     break
                 }
             }
+            
+            // Close the file explicitly to ensure it's ready for metadata embedding
+            outputFile = nil
             
             // Clean up
             playerNode.stop()
@@ -652,8 +661,15 @@ class AudioProcessor {
             pausedPosition = nil
             isPlaying = false
             
-            isExporting = false
-            completion(.success(outputURL))
+            if let artwork = self.currentArtwork {
+                self.embedMetadata(audioURL: outputURL, title: self.currentTitle, artist: self.currentArtist, artwork: artwork) { resultURL in
+                    self.isExporting = false
+                    completion(.success(resultURL ?? outputURL))
+                }
+            } else {
+                isExporting = false
+                completion(.success(outputURL))
+            }
             
         } catch {
             // Ensure we clean up on error
@@ -668,6 +684,69 @@ class AudioProcessor {
             }
             
             completion(.failure(error))
+        }
+    }
+    
+    /// Embeds metadata (Artwork, Title, Artist) into the exported audio file.
+    private func embedMetadata(audioURL: URL, title: String?, artist: String?, artwork: UIImage, completion: @escaping (URL?) -> Void) {
+        let asset = AVAsset(url: audioURL)
+        guard let exportSession = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetPassthrough) else {
+            completion(nil)
+            return
+        }
+        
+        let tempID = UUID().uuidString
+        let finalURL = FileManager.default.temporaryDirectory.appendingPathComponent("\(tempID).m4a")
+        
+        exportSession.outputURL = finalURL
+        exportSession.outputFileType = .m4a
+        
+        var metadata = [AVMetadataItem]()
+        
+        // Artwork
+        if let imageData = artwork.pngData() ?? artwork.jpegData(compressionQuality: 1.0) {
+            let item = AVMutableMetadataItem()
+            item.keySpace = .common
+            item.key = AVMetadataKey.commonKeyArtwork as NSCopying & NSObjectProtocol
+            item.value = imageData as NSCopying & NSObjectProtocol
+            metadata.append(item)
+        }
+        
+        // Title
+        if let title = title {
+            let item = AVMutableMetadataItem()
+            item.keySpace = .common
+            item.key = AVMetadataKey.commonKeyTitle as NSCopying & NSObjectProtocol
+            item.value = title as NSCopying & NSObjectProtocol
+            metadata.append(item)
+        }
+        
+        // Artist
+        if let artist = artist {
+            let item = AVMutableMetadataItem()
+            item.keySpace = .common
+            item.key = AVMetadataKey.commonKeyArtist as NSCopying & NSObjectProtocol
+            item.value = artist as NSCopying & NSObjectProtocol
+            metadata.append(item)
+        }
+        
+        exportSession.metadata = metadata
+        
+        exportSession.exportAsynchronously {
+            if exportSession.status == .completed {
+                // Replace the original file with the metadata-embedded file
+                do {
+                    try FileManager.default.removeItem(at: audioURL)
+                    try FileManager.default.moveItem(at: finalURL, to: audioURL)
+                    completion(audioURL)
+                } catch {
+                    print("Error moving metadata file: \(error)")
+                    completion(finalURL)
+                }
+            } else {
+                print("Metadata export failed: \(String(describing: exportSession.error))")
+                completion(nil)
+            }
         }
     }
 }
