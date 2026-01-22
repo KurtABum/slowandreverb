@@ -1638,8 +1638,8 @@ class LibraryManager {
 // MARK: - Library View Controller
 
 protocol LibraryViewControllerDelegate: AnyObject {
-    func libraryViewController(_ controller: LibraryViewController, didSelectSong song: Song)
-    func libraryViewControllerDidTapShuffle(_ controller: LibraryViewController)
+    func libraryViewController(_ controller: LibraryViewController, didSelectSong song: Song, in songs: [Song])
+    func libraryViewController(_ controller: LibraryViewController, didTapShuffleWith songs: [Song])
 }
 
 private enum LibrarySortOption: Int, CaseIterable {
@@ -1785,7 +1785,7 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
     }
     
     @objc private func shuffleTapped() {
-        delegate?.libraryViewControllerDidTapShuffle(self)
+        delegate?.libraryViewController(self, didTapShuffleWith: displayedSongs)
         dismiss(animated: true)
     }
     
@@ -2033,7 +2033,7 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
             return
         }
         let selectedSong = sections[indexPath.section].songs[indexPath.row]
-        delegate?.libraryViewController(self, didSelectSong: selectedSong)
+        delegate?.libraryViewController(self, didSelectSong: selectedSong, in: displayedSongs)
         dismiss(animated: true)
     }
     
@@ -2135,7 +2135,7 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
                 self?.addSongInternal(url: url)
                 
                 if shouldAutoLoad, let newSong = LibraryManager.shared.songs.last {
-                    self?.delegate?.libraryViewController(self!, didSelectSong: newSong)
+                    self?.delegate?.libraryViewController(self!, didSelectSong: newSong, in: LibraryManager.shared.songs)
                     self?.dismiss(animated: true)
                 } else {
                     self?.processImport(urls: urls, index: index + 1)
@@ -2146,7 +2146,7 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
             addSongInternal(url: url)
             
             if shouldAutoLoad, let newSong = LibraryManager.shared.songs.last {
-                delegate?.libraryViewController(self, didSelectSong: newSong)
+                delegate?.libraryViewController(self, didSelectSong: newSong, in: LibraryManager.shared.songs)
                 dismiss(animated: true)
             } else {
                 processImport(urls: urls, index: index + 1)
@@ -2994,6 +2994,12 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
     
     @objc private func savePlaybackPosition() {
         UserDefaults.standard.set(audioProcessor.getCurrentTime(), forKey: "lastPlaybackPosition")
+        
+        // Save Queue State
+        let queueIDs = playbackQueue.map { $0.id.uuidString }
+        UserDefaults.standard.set(queueIDs, forKey: "savedPlaybackQueue")
+        UserDefaults.standard.set(currentQueueIndex, forKey: "savedQueueIndex")
+        UserDefaults.standard.set(isShuffling, forKey: "savedIsShuffling")
     }
     
     private func loadSavedState() {
@@ -3032,6 +3038,32 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
         settingsViewController(SettingsViewController(), didChangeRememberSettingsState: isRememberSettingsEnabled)
         settingsViewController(SettingsViewController(), didChangeAutoPlayNextState: isAutoPlayNextEnabled)
         settingsViewController(SettingsViewController(), didChangeStepperState: isStepperEnabled)
+        
+        // Restore Queue
+        if let queueIDs = UserDefaults.standard.stringArray(forKey: "savedPlaybackQueue") {
+            let allSongs = LibraryManager.shared.songs
+            let songMap = Dictionary(allSongs.map { ($0.id, $0) }, uniquingKeysWith: { (first, _) in first })
+            
+            var restoredQueue: [Song] = []
+            for idString in queueIDs {
+                if let uuid = UUID(uuidString: idString), let song = songMap[uuid] {
+                    restoredQueue.append(song)
+                }
+            }
+            
+            self.playbackQueue = restoredQueue
+            self.currentQueueIndex = UserDefaults.standard.integer(forKey: "savedQueueIndex")
+            self.isShuffling = UserDefaults.standard.bool(forKey: "savedIsShuffling")
+            
+            // Validate index
+            if !self.playbackQueue.isEmpty {
+                if self.currentQueueIndex < 0 || self.currentQueueIndex >= self.playbackQueue.count {
+                    self.currentQueueIndex = 0
+                }
+            } else {
+                self.currentQueueIndex = -1
+            }
+        }
         
         // Restore the last audio file
         // Restore the last audio file first, as it provides the artwork for dynamic theming.
@@ -3086,6 +3118,12 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
         // Clear only file-related UserDefaults
         UserDefaults.standard.removeObject(forKey: "lastSongID")
         UserDefaults.standard.removeObject(forKey: "lastPlaybackPosition")
+        
+        // Clear Queue State
+        UserDefaults.standard.removeObject(forKey: "savedPlaybackQueue")
+        UserDefaults.standard.removeObject(forKey: "savedQueueIndex")
+        UserDefaults.standard.removeObject(forKey: "savedIsShuffling")
+        
         UserDefaults.standard.synchronize()
         
         // Reset UI to initial state
@@ -3741,19 +3779,18 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
 
     // MARK: LibraryViewControllerDelegate
     
-    func libraryViewController(_ controller: LibraryViewController, didSelectSong song: Song) {
+    func libraryViewController(_ controller: LibraryViewController, didSelectSong song: Song, in songs: [Song]) {
         isShuffling = false
-        playbackQueue = []
-        currentQueueIndex = -1
+        playbackQueue = songs
+        currentQueueIndex = songs.firstIndex(where: { $0.id == song.id }) ?? 0
         loadSong(song, andPlay: true)
     }
     
-    func libraryViewControllerDidTapShuffle(_ controller: LibraryViewController) {
-        let allSongs = LibraryManager.shared.songs
-        guard !allSongs.isEmpty else { return }
+    func libraryViewController(_ controller: LibraryViewController, didTapShuffleWith songs: [Song]) {
+        guard !songs.isEmpty else { return }
         
         isShuffling = true
-        playbackQueue = allSongs.shuffled()
+        playbackQueue = songs.shuffled()
         currentQueueIndex = 0
         
         // Turn on auto play next and turn off repeat song
@@ -3819,8 +3856,7 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
     // MARK: Playlist Navigation
     
     @objc private func playNextSong() {
-        if isShuffling {
-            guard !playbackQueue.isEmpty else { return }
+        if !playbackQueue.isEmpty {
             currentQueueIndex = (currentQueueIndex + 1) % playbackQueue.count
             loadSong(playbackQueue[currentQueueIndex], andPlay: true)
         } else {
@@ -3844,8 +3880,7 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
             return
         }
         
-        if isShuffling {
-            guard !playbackQueue.isEmpty else { return }
+        if !playbackQueue.isEmpty {
             currentQueueIndex -= 1
             if currentQueueIndex < 0 { currentQueueIndex = playbackQueue.count - 1 }
             loadSong(playbackQueue[currentQueueIndex], andPlay: true)
