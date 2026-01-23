@@ -2003,6 +2003,7 @@ struct Song: Codable, Identifiable, Equatable {
     var savedPitch: Float?
     var savedSpeed: Float?
     var savedReverb: Float?
+    var isFavorite: Bool?
     
     var url: URL? {
         let paths = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)
@@ -2089,6 +2090,15 @@ class LibraryManager {
         saveLibrary()
     }
     
+    func toggleFavorite(for songID: UUID) {
+        if let index = songs.firstIndex(where: { $0.id == songID }) {
+            var song = songs[index]
+            song.isFavorite = !(song.isFavorite ?? false)
+            songs[index] = song
+            saveLibrary()
+        }
+    }
+    
     func deleteSongs(withIDs ids: [UUID]) {
         let idsSet = Set(ids)
         songs.filter { idsSet.contains($0.id) }.forEach { song in
@@ -2144,6 +2154,7 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
     weak var delegate: LibraryViewControllerDelegate?
     var currentSongID: UUID?
     var initialSearchQuery: String?
+    var showFavoritesOnly = false
     
     private let tableView = UITableView()
     private var displayedSongs: [Song] = []
@@ -2179,7 +2190,7 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
     private func setupUI() {
         view.backgroundColor = .systemGroupedBackground
         
-        title = "Library"
+        title = showFavoritesOnly ? "Favorites" : "Library"
         
         navigationItem.leftBarButtonItem = UIBarButtonItem(barButtonSystemItem: .close, target: self, action: #selector(dismissView))
         updateRightBarButtons()
@@ -2187,6 +2198,12 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
         navigationController?.navigationBar.prefersLargeTitles = true
 
         let headerView = UIView()
+        let stackView = UIStackView()
+        stackView.axis = .vertical
+        stackView.spacing = 10
+        stackView.translatesAutoresizingMaskIntoConstraints = false
+        headerView.addSubview(stackView)
+        
         let shuffleButton = UIButton(type: .system)
         var config = UIButton.Configuration.filled()
         config.title = "Shuffle"
@@ -2196,17 +2213,31 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
         config.baseForegroundColor = .white
         shuffleButton.configuration = config
         shuffleButton.addTarget(self, action: #selector(shuffleTapped), for: .touchUpInside)
-        shuffleButton.translatesAutoresizingMaskIntoConstraints = false
-        headerView.addSubview(shuffleButton)
+        stackView.addArrangedSubview(shuffleButton)
+        
+        if !showFavoritesOnly {
+            let favoritesButton = UIButton(type: .system)
+            var favConfig = UIButton.Configuration.filled()
+            favConfig.title = "Favorites"
+            favConfig.image = UIImage(systemName: "heart.fill")
+            favConfig.imagePadding = 8
+            favConfig.baseBackgroundColor = .systemPink
+            favConfig.baseForegroundColor = .white
+            favoritesButton.configuration = favConfig
+            favoritesButton.addTarget(self, action: #selector(favoritesTapped), for: .touchUpInside)
+            stackView.addArrangedSubview(favoritesButton)
+            favoritesButton.heightAnchor.constraint(equalToConstant: 44).isActive = true
+        }
         
         NSLayoutConstraint.activate([
-            shuffleButton.topAnchor.constraint(equalTo: headerView.topAnchor, constant: 10),
-            shuffleButton.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 20),
-            shuffleButton.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -20),
-            shuffleButton.bottomAnchor.constraint(equalTo: headerView.bottomAnchor, constant: -10),
+            stackView.topAnchor.constraint(equalTo: headerView.topAnchor, constant: 10),
+            stackView.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 20),
+            stackView.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -20),
+            stackView.bottomAnchor.constraint(equalTo: headerView.bottomAnchor, constant: -10),
             shuffleButton.heightAnchor.constraint(equalToConstant: 44)
         ])
-        headerView.frame.size.height = 64 // Manually set height
+        
+        headerView.frame.size.height = showFavoritesOnly ? 64 : 118
         tableView.tableHeaderView = headerView
 
         tableView.translatesAutoresizingMaskIntoConstraints = false
@@ -2243,10 +2274,11 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
     }
     
     private func filterContentForSearchText(_ searchText: String) {
+        let sourceSongs = showFavoritesOnly ? LibraryManager.shared.songs.filter { $0.isFavorite ?? false } : LibraryManager.shared.songs
         if searchText.isEmpty {
-            displayedSongs = LibraryManager.shared.songs
+            displayedSongs = sourceSongs
         } else {
-            displayedSongs = LibraryManager.shared.songs.filter { (song: Song) -> Bool in
+            displayedSongs = sourceSongs.filter { (song: Song) -> Bool in
                 let titleMatch = song.title.range(of: searchText, options: .caseInsensitive) != nil
                 let artistMatch = (song.artist ?? "").range(of: searchText, options: .caseInsensitive) != nil
                 let albumMatch = (song.album ?? "").range(of: searchText, options: .caseInsensitive) != nil
@@ -2259,6 +2291,14 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
     
     @objc private func dismissView() {
         dismiss(animated: true)
+    }
+    
+    @objc private func favoritesTapped() {
+        let favoritesVC = LibraryViewController()
+        favoritesVC.showFavoritesOnly = true
+        favoritesVC.delegate = delegate
+        favoritesVC.currentSongID = currentSongID
+        navigationController?.pushViewController(favoritesVC, animated: true)
     }
     
     @objc private func shuffleTapped() {
@@ -2335,7 +2375,11 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
         if let searchText = searchController.searchBar.text, !searchText.isEmpty {
             filterContentForSearchText(searchText)
         } else {
-            displayedSongs = LibraryManager.shared.songs
+            if showFavoritesOnly {
+                displayedSongs = LibraryManager.shared.songs.filter { $0.isFavorite ?? false }
+            } else {
+                displayedSongs = LibraryManager.shared.songs
+            }
             sortSongs()
             tableView.reloadData()
         }
@@ -2570,7 +2614,18 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
         }
         deleteAction.image = UIImage(systemName: "trash")
         
-        return UISwipeActionsConfiguration(actions: [deleteAction, infoAction])
+        let favoriteAction = UIContextualAction(style: .normal, title: nil) { [weak self] _, _, completion in
+            guard let self = self else { completion(false); return }
+            let song = self.sections[indexPath.section].songs[indexPath.row]
+            LibraryManager.shared.toggleFavorite(for: song.id)
+            self.loadSongs()
+            completion(true)
+        }
+        let isFav = self.sections[indexPath.section].songs[indexPath.row].isFavorite ?? false
+        favoriteAction.image = UIImage(systemName: isFav ? "heart.slash.fill" : "heart.fill")
+        favoriteAction.backgroundColor = isFav ? .systemGray : .systemPink
+        
+        return UISwipeActionsConfiguration(actions: [deleteAction, favoriteAction, infoAction])
     }
     
     private func showSongInfo(_ song: Song) {
