@@ -3,6 +3,7 @@ import AVFoundation
 import UniformTypeIdentifiers
 import MediaPlayer // Needed for background media controls and now playing info
 import SwiftUI // Added for Canvas Preview support
+import UserNotifications
 
 // MARK: - 1. Audio Engine Logic
 
@@ -49,8 +50,7 @@ class AudioProcessor {
     // Closures for playlist navigation from remote commands
     var onNextTrack: (() -> Void)?
     var onPreviousTrack: (() -> Void)?
-    var onPresetSlowedReverb: (() -> Void)?
-    var onPresetSpedUp: (() -> Void)?
+    var onCyclePreset: (() -> Void)?
 
     // MARK: Initialization
 
@@ -417,26 +417,20 @@ class AudioProcessor {
         
         // Add handler for Dislike Command (Mapped to Slow + Reverb)
         commandCenter.dislikeCommand.isEnabled = true
-        commandCenter.dislikeCommand.localizedTitle = "Slow + Reverb"
+        commandCenter.dislikeCommand.localizedTitle = "Cycle Presets"
         commandCenter.dislikeCommand.addTarget { [weak self] _ in
             runOnMain {
-                self?.onPresetSlowedReverb?()
+                self?.onCyclePreset?()
             }
             return .success
         }
         
-        // Add handler for Like Command (Mapped to Toggle Presets)
+        // Add handler for Like Command (Mapped to Cycle Presets)
         commandCenter.likeCommand.isEnabled = true
-        commandCenter.likeCommand.localizedTitle = "Toggle Preset"
+        commandCenter.likeCommand.localizedTitle = "Cycle Presets"
         commandCenter.likeCommand.addTarget { [weak self] _ in
-            guard let self = self else { return .commandFailed }
             runOnMain {
-                let currentRate = self.isVarispeedEnabled ? self.varispeedNode.rate : self.timePitchNode.rate
-                if currentRate >= 1.0 {
-                    self.onPresetSlowedReverb?()
-                } else {
-                    self.onPresetSpedUp?()
-                }
+                self?.onCyclePreset?()
             }
             return .success
         }
@@ -862,6 +856,316 @@ class ThemeManager {
     }
 
     private init() {}
+}
+
+// MARK: - Preset Management
+
+struct AudioPreset: Codable, Equatable, Identifiable {
+    var id = UUID()
+    var name: String
+    var speed: Float
+    var pitch: Float
+    var reverb: Float
+    var bass: Float = 0
+    var mids: Float = 0
+    var treble: Float = 0
+    
+    static let defaults: [AudioPreset] = [
+        AudioPreset(name: "Default", speed: 1.0, pitch: 0, reverb: 0),
+        AudioPreset(name: "Slowed + Reverb", speed: 0.8, pitch: 0, reverb: 40),
+        AudioPreset(name: "Sped Up", speed: 1.2, pitch: 0, reverb: 0)
+    ]
+}
+
+class PresetManager: NSObject, UNUserNotificationCenterDelegate {
+    static let shared = PresetManager()
+    private let key = "savedAudioPresets"
+    private let notifyKey = "isNotifyPresetsEnabled"
+    
+    var presets: [AudioPreset] {
+        didSet { save() }
+    }
+    
+    override init() {
+        self.presets = AudioPreset.defaults
+        super.init()
+        if let data = UserDefaults.standard.data(forKey: key),
+           let decoded = try? JSONDecoder().decode([AudioPreset].self, from: data) {
+            presets = decoded
+        }
+        
+        UNUserNotificationCenter.current().delegate = self
+    }
+    
+    var isNotifyEnabled: Bool {
+        get { UserDefaults.standard.bool(forKey: notifyKey) }
+        set { UserDefaults.standard.set(newValue, forKey: notifyKey) }
+    }
+    
+    func save() {
+        if let encoded = try? JSONEncoder().encode(presets) {
+            UserDefaults.standard.set(encoded, forKey: key)
+        }
+    }
+    
+    func addPreset(_ preset: AudioPreset) {
+        presets.append(preset)
+    }
+    
+    func removePreset(at index: Int) {
+        presets.remove(at: index)
+    }
+    
+    func movePreset(from source: Int, to destination: Int) {
+        let item = presets.remove(at: source)
+        presets.insert(item, at: destination)
+    }
+    
+    func resetToDefaults() {
+        presets = AudioPreset.defaults
+    }
+    
+    func requestNotificationPermission(completion: @escaping (Bool) -> Void) {
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
+            DispatchQueue.main.async {
+                completion(granted)
+            }
+        }
+    }
+    
+    func sendPresetNotification(presetName: String) {
+        guard isNotifyEnabled else { return }
+        
+        let content = UNMutableNotificationContent()
+        content.title = "Preset Changed"
+        content.body = "Active Preset: \(presetName)"
+        content.sound = .default
+        
+        let request = UNNotificationRequest(identifier: "PresetChange", content: content, trigger: nil)
+        UNUserNotificationCenter.current().add(request)
+    }
+    
+    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        completionHandler([.banner, .sound, .list])
+    }
+}
+
+class PresetsSettingsViewController: UITableViewController {
+    
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        title = "Presets"
+        tableView.register(UITableViewCell.self, forCellReuseIdentifier: "PresetCell")
+        tableView.register(UITableViewCell.self, forCellReuseIdentifier: "SwitchCell")
+        navigationItem.rightBarButtonItem = UIBarButtonItem(barButtonSystemItem: .add, target: self, action: #selector(addPresetTapped))
+        navigationItem.leftBarButtonItem = editButtonItem
+    }
+    
+    @objc private func addPresetTapped() {
+        let editor = PresetEditorViewController()
+        editor.onSave = { [weak self] preset in
+            PresetManager.shared.addPreset(preset)
+            self?.tableView.reloadData()
+        }
+        let nav = UINavigationController(rootViewController: editor)
+        present(nav, animated: true)
+    }
+    
+    // MARK: - Table view data source
+
+    override func numberOfSections(in tableView: UITableView) -> Int {
+        return 2
+    }
+
+    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
+        if section == 0 { return 1 }
+        return PresetManager.shared.presets.count
+    }
+    
+    override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
+        return section == 0 ? "Settings" : "Saved Presets"
+    }
+
+    override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+        if indexPath.section == 0 {
+            let cell = tableView.dequeueReusableCell(withIdentifier: "SwitchCell", for: indexPath)
+            var content = cell.defaultContentConfiguration()
+            content.text = "Notify of Presets"
+            cell.contentConfiguration = content
+            
+            let switchControl = UISwitch()
+            switchControl.isOn = PresetManager.shared.isNotifyEnabled
+            switchControl.addTarget(self, action: #selector(notifySwitchChanged(_:)), for: .valueChanged)
+            cell.accessoryView = switchControl
+            cell.selectionStyle = .none
+            return cell
+        }
+        
+        let cell = tableView.dequeueReusableCell(withIdentifier: "PresetCell", for: indexPath)
+        let preset = PresetManager.shared.presets[indexPath.row]
+        
+        var content = cell.defaultContentConfiguration()
+        content.text = preset.name
+        content.secondaryText = String(format: "Speed: %.2fx | Pitch: %.0f | Reverb: %.0f%%", preset.speed, preset.pitch, preset.reverb)
+        cell.contentConfiguration = content
+        cell.accessoryView = nil
+        
+        return cell
+    }
+    
+    @objc private func notifySwitchChanged(_ sender: UISwitch) {
+        if sender.isOn {
+            PresetManager.shared.requestNotificationPermission { granted in
+                if granted {
+                    PresetManager.shared.isNotifyEnabled = true
+                } else {
+                    sender.setOn(false, animated: true)
+                    let alert = UIAlertController(title: "Permission Required", message: "Please enable notifications in Settings to use this feature.", preferredStyle: .alert)
+                    alert.addAction(UIAlertAction(title: "OK", style: .default))
+                    self.present(alert, animated: true)
+                }
+            }
+        } else {
+            PresetManager.shared.isNotifyEnabled = false
+        }
+    }
+
+    override func tableView(_ tableView: UITableView, commit editingStyle: UITableViewCell.EditingStyle, forRowAt indexPath: IndexPath) {
+        if editingStyle == .delete && indexPath.section == 1 {
+            PresetManager.shared.removePreset(at: indexPath.row)
+            tableView.deleteRows(at: [indexPath], with: .fade)
+        }
+    }
+    
+    override func tableView(_ tableView: UITableView, canEditRowAt indexPath: IndexPath) -> Bool {
+        return indexPath.section == 1
+    }
+
+    override func tableView(_ tableView: UITableView, moveRowAt fromIndexPath: IndexPath, to: IndexPath) {
+        if fromIndexPath.section == 1 && to.section == 1 {
+            PresetManager.shared.movePreset(from: fromIndexPath.row, to: to.row)
+        }
+    }
+    
+    override func tableView(_ tableView: UITableView, canMoveRowAt indexPath: IndexPath) -> Bool {
+        return indexPath.section == 1
+    }
+    
+    override func tableView(_ tableView: UITableView, targetIndexPathForMoveFromRowAt sourceIndexPath: IndexPath, toProposedIndexPath proposedDestinationIndexPath: IndexPath) -> IndexPath {
+        if proposedDestinationIndexPath.section != 1 {
+            return sourceIndexPath
+        }
+        return proposedDestinationIndexPath
+    }
+    
+    override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+        if indexPath.section == 1 {
+            tableView.deselectRow(at: indexPath, animated: true)
+            let preset = PresetManager.shared.presets[indexPath.row]
+            let editor = PresetEditorViewController(preset: preset)
+            editor.onSave = { [weak self] updatedPreset in
+                PresetManager.shared.presets[indexPath.row] = updatedPreset
+                self?.tableView.reloadData()
+            }
+            let nav = UINavigationController(rootViewController: editor)
+            present(nav, animated: true)
+        }
+    }
+}
+
+class PresetEditorViewController: UIViewController {
+    var preset: AudioPreset
+    var onSave: ((AudioPreset) -> Void)?
+    
+    private let nameField = UITextField()
+    private let speedSlider = UISlider()
+    private let pitchSlider = UISlider()
+    private let reverbSlider = UISlider()
+    
+    private let speedLabel = UILabel()
+    private let pitchLabel = UILabel()
+    private let reverbLabel = UILabel()
+    
+    init(preset: AudioPreset = AudioPreset(name: "New Preset", speed: 1.0, pitch: 0, reverb: 0)) {
+        self.preset = preset
+        super.init(nibName: nil, bundle: nil)
+    }
+    
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .systemBackground
+        title = "Edit Preset"
+        navigationItem.rightBarButtonItem = UIBarButtonItem(barButtonSystemItem: .save, target: self, action: #selector(saveTapped))
+        navigationItem.leftBarButtonItem = UIBarButtonItem(barButtonSystemItem: .cancel, target: self, action: #selector(cancelTapped))
+        
+        setupUI()
+    }
+    
+    private func setupUI() {
+        let stack = UIStackView()
+        stack.axis = .vertical
+        stack.spacing = 20
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(stack)
+        
+        nameField.borderStyle = .roundedRect
+        nameField.placeholder = "Preset Name"
+        nameField.text = preset.name
+        stack.addArrangedSubview(nameField)
+        
+        // Speed
+        speedSlider.minimumValue = 0.5; speedSlider.maximumValue = 2.0; speedSlider.value = preset.speed
+        speedSlider.addTarget(self, action: #selector(updateLabels), for: .valueChanged)
+        stack.addArrangedSubview(createControl(label: speedLabel, slider: speedSlider))
+        
+        // Pitch
+        pitchSlider.minimumValue = -1200; pitchSlider.maximumValue = 1200; pitchSlider.value = preset.pitch
+        pitchSlider.addTarget(self, action: #selector(updateLabels), for: .valueChanged)
+        stack.addArrangedSubview(createControl(label: pitchLabel, slider: pitchSlider))
+        
+        // Reverb
+        reverbSlider.minimumValue = 0; reverbSlider.maximumValue = 100; reverbSlider.value = preset.reverb
+        reverbSlider.addTarget(self, action: #selector(updateLabels), for: .valueChanged)
+        stack.addArrangedSubview(createControl(label: reverbLabel, slider: reverbSlider))
+        
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 20),
+            stack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
+            stack.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20)
+        ])
+        
+        updateLabels()
+    }
+    
+    private func createControl(label: UILabel, slider: UISlider) -> UIView {
+        let vStack = UIStackView(arrangedSubviews: [label, slider])
+        vStack.axis = .vertical
+        vStack.spacing = 8
+        return vStack
+    }
+    
+    @objc private func updateLabels() {
+        speedLabel.text = String(format: "Speed: %.2fx", speedSlider.value)
+        pitchLabel.text = String(format: "Pitch: %.0f cents", pitchSlider.value)
+        reverbLabel.text = String(format: "Reverb: %.0f%%", reverbSlider.value)
+    }
+    
+    @objc private func saveTapped() {
+        guard let name = nameField.text, !name.isEmpty else { return }
+        preset.name = name
+        preset.speed = speedSlider.value
+        preset.pitch = pitchSlider.value
+        preset.reverb = reverbSlider.value
+        
+        onSave?(preset)
+        dismiss(animated: true)
+    }
+    
+    @objc private func cancelTapped() {
+        dismiss(animated: true)
+    }
 }
 
 // MARK: - Settings View Controller
@@ -1369,6 +1673,10 @@ class SettingsViewController: UIViewController {
         let interfaceFolder = createFolderButton(title: "Interface", action: #selector(openInterfaceSettings))
         let themeFolder = createFolderButton(title: "Theme", action: #selector(openThemeSettings))
         let extrasFolder = createFolderButton(title: "Extras", action: #selector(openExtrasSettings))
+        
+        // Add Presets button to extrasGroups
+        let presetsFolder = createFolderButton(title: "Manage Presets", action: #selector(openPresetsSettings))
+        extrasGroups.insert(presetsFolder, at: 0)
 
         // --- Main Settings Stack ---
         let settingsOptionsStack = UIStackView(arrangedSubviews: [
@@ -1642,6 +1950,11 @@ class SettingsViewController: UIViewController {
         let vc = SubSettingsViewController()
         vc.title = "Extras"
         vc.contentViews = extrasGroups
+        navigationController?.pushViewController(vc, animated: true)
+    }
+    
+    @objc private func openPresetsSettings() {
+        let vc = PresetsSettingsViewController()
         navigationController?.pushViewController(vc, animated: true)
     }
 }
@@ -2565,6 +2878,7 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
     private var isShuffling = false
     private var playbackQueue: [Song] = []
     private var currentQueueIndex: Int = -1
+    private var currentPresetIndex: Int?
     
     // MARK: View Lifecycle
     
@@ -2614,23 +2928,20 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
             self?.updatePlayPauseButtonState()
             self?.audioProcessor.syncNowPlayingInfo()
         }
+        audioProcessor.onNextTrack = { [weak self] in self?.playNextSong() }
+        audioProcessor.onPreviousTrack = { [weak self] in self?.playPreviousSong() }
+        audioProcessor.onCyclePreset = { [weak self] in
+            DispatchQueue.main.async {
+                self?.cycleToNextPreset()
+            }
+        }
+        
+        // Restore rate change handler
         audioProcessor.onPlaybackRateChanged = { [weak self] rate in
             guard let self = self else { return }
             self.speedSlider.setValue(rate, animated: true)
             self.speedLabel.text = String(format: "Speed (%.2fx)", rate)
             UserDefaults.standard.set(rate, forKey: "speedValue")
-        }
-        audioProcessor.onNextTrack = { [weak self] in self?.playNextSong() }
-        audioProcessor.onPreviousTrack = { [weak self] in self?.playPreviousSong() }
-        audioProcessor.onPresetSlowedReverb = { [weak self] in
-            DispatchQueue.main.async {
-                self?.applySlowedReverbPreset()
-            }
-        }
-        audioProcessor.onPresetSpedUp = { [weak self] in
-            DispatchQueue.main.async {
-                self?.applySpedUpPreset()
-            }
         }
     }
 
@@ -2682,7 +2993,7 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
         songTitleLabel.textAlignment = .center
         songTitleLabel.numberOfLines = 0 // Allow title to wrap if long
         songTitleLabel.isUserInteractionEnabled = true
-        songTitleLabel.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(showSearchMenu)))
+        songTitleLabel.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(showSearchMenu(_:))))
         
         // Artist Name Setup
         artistNameLabel.font = .italicSystemFont(ofSize: 16) // Increased font size
@@ -2690,7 +3001,7 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
         artistNameLabel.textAlignment = .center
         artistNameLabel.numberOfLines = 0
         artistNameLabel.isUserInteractionEnabled = true
-        artistNameLabel.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(showSearchMenu)))
+        artistNameLabel.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(showSearchMenu(_:))))
         
         let songInfoStack = UIStackView(arrangedSubviews: [songTitleLabel, artistNameLabel])
         songInfoStack.axis = .vertical
@@ -3404,7 +3715,7 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
         present(navController, animated: true)
     }
     
-    @objc private func showSearchMenu() {
+    @objc private func showSearchMenu(_ sender: UITapGestureRecognizer) {
         guard let song = currentSong else { return }
         
         let alert = UIAlertController(title: nil, message: nil, preferredStyle: .actionSheet)
@@ -3427,8 +3738,8 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
         alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
         
         if let popover = alert.popoverPresentationController {
-            popover.sourceView = songTitleLabel
-            popover.sourceRect = songTitleLabel.bounds
+            popover.sourceView = sender.view ?? songTitleLabel
+            popover.sourceRect = sender.view?.bounds ?? songTitleLabel.bounds
         }
         
         if hasAction {
@@ -3727,6 +4038,7 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
         }
         audioProcessor.setPitch(pitch: finalPitch)
         UserDefaults.standard.set(pitchInCents, forKey: "pitchValue")
+        currentPresetIndex = nil // Invalidate preset
         let semitones = Int((pitchInCents / 100.0).rounded())
         pitchLabel.text = String(format: "Pitch (%d st)", semitones)
     }
@@ -3777,6 +4089,7 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
     @objc func speedSliderChanged(_ sender: UISlider) {
         let rawRate = sender.value // The actual slider position
         UserDefaults.standard.set(rawRate, forKey: "speedValue")
+        currentPresetIndex = nil // Invalidate preset
 
         var finalRate = rawRate
         if isAccurateSpeedEnabled {
@@ -3808,6 +4121,7 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
         let mix = sender.value
         audioProcessor.setReverbMix(mix: mix)
         UserDefaults.standard.set(mix, forKey: "reverbValue")
+        currentPresetIndex = nil // Invalidate preset
         reverbLabel.text = String(format: "Reverb (%d%%)", Int(mix.rounded()))
     }
     
@@ -3815,6 +4129,7 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
         let gain = sender.value
         audioProcessor.setBassGain(gain: gain)
         UserDefaults.standard.set(gain, forKey: "bassValue")
+        currentPresetIndex = nil // Invalidate preset
         bassLabel.text = String(format: "Bass (%.1f dB)", gain)
     }
     
@@ -3822,6 +4137,7 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
         let gain = sender.value
         audioProcessor.setMidsGain(gain: gain)
         UserDefaults.standard.set(gain, forKey: "midsValue")
+        currentPresetIndex = nil // Invalidate preset
         midsLabel.text = String(format: "Mids (%.1f dB)", gain)
     }
     
@@ -3829,6 +4145,7 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
         let gain = sender.value
         audioProcessor.setTrebleGain(gain: gain)
         UserDefaults.standard.set(gain, forKey: "trebleValue")
+        currentPresetIndex = nil // Invalidate preset
         trebleLabel.text = String(format: "Treble (%.1f dB)", gain)
     }
     
@@ -4047,6 +4364,45 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
         impactFeedbackGenerator.impactOccurred()
     }
     
+    func cycleToNextPreset() {
+        let presets = PresetManager.shared.presets
+        guard !presets.isEmpty else { return }
+        
+        let nextIndex: Int
+        if let current = currentPresetIndex {
+            nextIndex = (current + 1) % presets.count
+        } else {
+            nextIndex = 0
+        }
+        
+        applyPreset(presets[nextIndex], index: nextIndex)
+        PresetManager.shared.sendPresetNotification(presetName: presets[nextIndex].name)
+    }
+    
+    func applyPreset(_ preset: AudioPreset, index: Int?) {
+        currentPresetIndex = index
+        
+        speedSlider.setValue(preset.speed, animated: true)
+        speedSliderChanged(speedSlider)
+        
+        pitchSlider.setValue(preset.pitch, animated: true)
+        pitchSliderChanged(pitchSlider)
+        
+        reverbSlider.setValue(preset.reverb, animated: true)
+        reverbSliderChanged(reverbSlider)
+        
+        bassSlider.setValue(preset.bass, animated: true)
+        bassSliderChanged(bassSlider)
+        midsSlider.setValue(preset.mids, animated: true)
+        midsSliderChanged(midsSlider)
+        trebleSlider.setValue(preset.treble, animated: true)
+        trebleSliderChanged(trebleSlider)
+        
+        // Re-establish index because slider changes invalidated it
+        currentPresetIndex = index
+        impactFeedbackGenerator.impactOccurred()
+    }
+
     @objc private func applySlowedReverbPreset() {
         let savedSpeed = UserDefaults.standard.float(forKey: "slowedReverbSpeedPreset")
         let targetSpeed = savedSpeed > 0 ? savedSpeed : 0.8
