@@ -178,7 +178,9 @@ class AudioProcessor {
             self.nowPlayingInfo = [
                 MPMediaItemPropertyTitle: songTitle ?? url.deletingPathExtension().lastPathComponent,
                 MPMediaItemPropertyArtist: artistName,
-                MPMediaItemPropertyPlaybackDuration: getAudioDuration()
+                MPMediaItemPropertyPlaybackDuration: getAudioDuration(),
+                MPNowPlayingInfoPropertyElapsedPlaybackTime: 0.0,
+                MPNowPlayingInfoPropertyPlaybackRate: 0.0  // Initially paused
             ]
             
             if let artwork = artworkImage {
@@ -198,6 +200,12 @@ class AudioProcessor {
             self.currentArtwork = artworkImage
             
             print("Audio file loaded: \(title)")
+            
+            // Immediately sync the now playing info to the lock screen
+            DispatchQueue.main.async { [weak self] in
+                self?.syncNowPlayingInfo()
+            }
+            
             return (title: title, artist: artistName, artwork: artworkImage)
             
         } catch {
@@ -248,10 +256,8 @@ class AudioProcessor {
         playerNode.play()
         isPlaying = true
         print("Playback started/resumed. playerNode.isPlaying = \(playerNode.isPlaying)")
-        // Small delay to ensure audio engine has processed the state change
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
-            self?.syncNowPlayingInfo()
-        }
+        // Update lock screen immediately
+        syncNowPlayingInfo()
     }
 
     /// Starts or stops the playback and handles file rescheduling for looping.
@@ -270,11 +276,9 @@ class AudioProcessor {
             playerNode.pause()
         }
         isPlaying = false
-        print("Playback paused. playerNode.isPlaying = \(playerNode.isPlaying)")
-        // Small delay to ensure audio engine has processed the state change
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
-            self?.syncNowPlayingInfo()
-        }
+        print("Playback paused. isPlaying=\(isPlaying), playerNode.isPlaying=\(playerNode.isPlaying)")
+        // Update lock screen immediately
+        syncNowPlayingInfo()
     }
     
     /// Seeks to a specific time in the audio file.
@@ -338,10 +342,12 @@ class AudioProcessor {
     private func setupRemoteTransportControls() {
         let commandCenter = MPRemoteCommandCenter.shared()
 
-        // Enable commands explicitly
+        // Enable commands explicitly - these MUST stay enabled
         commandCenter.playCommand.isEnabled = true
         commandCenter.pauseCommand.isEnabled = true
         commandCenter.togglePlayPauseCommand.isEnabled = true
+        
+        print("🔧 Remote commands ENABLED: play, pause, togglePlayPause")
 
         // Helper to execute on main thread immediately if possible, to ensure UI updates sync with return .success
         func runOnMain(_ block: @escaping () -> Void) {
@@ -355,9 +361,9 @@ class AudioProcessor {
         // Add handler for Play Command
         commandCenter.playCommand.addTarget { [weak self] event in
             guard let self = self else { return .commandFailed }
+            print("🔘 LOCK SCREEN: Play button pressed")
             runOnMain {
                 self.play()
-                self.syncNowPlayingInfo()
                 self.onPlaybackStateChanged?()
             }
             return .success
@@ -366,9 +372,9 @@ class AudioProcessor {
         // Add handler for Pause Command
         commandCenter.pauseCommand.addTarget { [weak self] event in
             guard let self = self else { return .commandFailed }
+            print("🔘 LOCK SCREEN: Pause button pressed")
             runOnMain {
                 self.pause()
-                self.syncNowPlayingInfo()
                 self.onPlaybackStateChanged?()
             }
             return .success
@@ -377,9 +383,9 @@ class AudioProcessor {
         // Add handler for Toggle Play/Pause Command
         commandCenter.togglePlayPauseCommand.addTarget { [weak self] event in
             guard let self = self else { return .commandFailed }
+            print("🔘 LOCK SCREEN: Toggle button pressed")
             runOnMain {
                 self.togglePlayback()
-                self.syncNowPlayingInfo()
                 self.onPlaybackStateChanged?()
             }
             return .success
@@ -443,16 +449,16 @@ class AudioProcessor {
     func updateNowPlayingInfo(isPaused: Bool = false) {
         DispatchQueue.main.async { [weak self] in
             guard let self = self, var info = self.nowPlayingInfo else {
-                print("updateNowPlayingInfo: No nowPlayingInfo available")
+                print("⚠️ updateNowPlayingInfo: No nowPlayingInfo available")
                 MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
                 return
             }
             
-            // Use actual player node state as source of truth
-            let actuallyPlaying = self.playerNode.isPlaying
-            let playbackRate = !actuallyPlaying ? 0.0 : (self.isVarispeedEnabled ? self.varispeedNode.rate : self.timePitchNode.rate)
+            // Use the isPlaying property as the source of truth for playback state
+            let isActuallyPlaying = self.isPlaying && self.playerNode.isPlaying
+            let playbackRate = !isActuallyPlaying ? 0.0 : (self.isVarispeedEnabled ? self.varispeedNode.rate : self.timePitchNode.rate)
             
-            print("updateNowPlayingInfo: actuallyPlaying=\(actuallyPlaying), playbackRate=\(playbackRate)")
+            print("🎵 updateNowPlayingInfo: self.isPlaying=\(self.isPlaying), playerNode.isPlaying=\(self.playerNode.isPlaying), isActuallyPlaying=\(isActuallyPlaying), FINAL playbackRate=\(playbackRate)")
             
             // Update only the dynamic properties: elapsed time and playback rate.
             info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = self.getCurrentTime()
@@ -460,7 +466,7 @@ class AudioProcessor {
 
             // Set the updated information.
             MPNowPlayingInfoCenter.default().nowPlayingInfo = info
-            print("updateNowPlayingInfo: Lock screen updated with rate=\(playbackRate)")
+            print("✅ Lock screen set to playbackRate: \(playbackRate)")
         }
     }
     
@@ -468,7 +474,6 @@ class AudioProcessor {
     /// Call this whenever playback state might have changed.
     func syncNowPlayingInfo() {
         let isPlaying = playerNode.isPlaying
-        print("syncNowPlayingInfo called: playerNode.isPlaying = \(isPlaying)")
         updateNowPlayingInfo(isPaused: !isPlaying)
     }
     
@@ -2155,6 +2160,7 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
     var currentSongID: UUID?
     var initialSearchQuery: String?
     var showFavoritesOnly = false
+    private var hasScrolledToCurrentSong = false
     
     private let tableView = UITableView()
     private var displayedSongs: [Song] = []
@@ -2184,6 +2190,9 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
             searchController.isActive = true
             searchController.searchBar.text = query
             initialSearchQuery = nil
+        } else if !hasScrolledToCurrentSong {
+            scrollToCurrentSong()
+            hasScrolledToCurrentSong = true
         }
     }
     
@@ -2200,8 +2209,13 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
         navigationController?.navigationBar.prefersLargeTitles = true
 
         let headerView = UIView()
+        headerView.backgroundColor = .systemGroupedBackground
+        headerView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(headerView)
+        
         let stackView = UIStackView()
-        stackView.axis = .vertical
+        stackView.axis = .horizontal
+        stackView.distribution = .fillEqually
         stackView.spacing = 10
         stackView.translatesAutoresizingMaskIntoConstraints = false
         headerView.addSubview(stackView)
@@ -2228,10 +2242,13 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
             favoritesButton.configuration = favConfig
             favoritesButton.addTarget(self, action: #selector(favoritesTapped), for: .touchUpInside)
             stackView.addArrangedSubview(favoritesButton)
-            favoritesButton.heightAnchor.constraint(equalToConstant: 44).isActive = true
         }
         
         NSLayoutConstraint.activate([
+            headerView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            headerView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            headerView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            
             stackView.topAnchor.constraint(equalTo: headerView.topAnchor, constant: 10),
             stackView.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 20),
             stackView.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -20),
@@ -2239,8 +2256,6 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
             shuffleButton.heightAnchor.constraint(equalToConstant: 44)
         ])
         
-        headerView.frame.size.height = showFavoritesOnly ? 64 : 118
-        tableView.tableHeaderView = headerView
 
         tableView.translatesAutoresizingMaskIntoConstraints = false
         tableView.dataSource = self
@@ -2254,12 +2269,26 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
         view.addSubview(tableView)
         
         NSLayoutConstraint.activate([
-            tableView.topAnchor.constraint(equalTo: view.topAnchor),
+            tableView.topAnchor.constraint(equalTo: headerView.bottomAnchor),
             tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor)
         ])
         tableView.allowsMultipleSelectionDuringEditing = true
+    }
+    
+    private func scrollToCurrentSong() {
+        guard let currentID = currentSongID else { return }
+        
+        for (sectionIndex, section) in sections.enumerated() {
+            if let rowIndex = section.songs.firstIndex(where: { $0.id == currentID }) {
+                let indexPath = IndexPath(row: rowIndex, section: sectionIndex)
+                if tableView.numberOfSections > sectionIndex && tableView.numberOfRows(inSection: sectionIndex) > rowIndex {
+                    tableView.scrollToRow(at: indexPath, at: .top, animated: true)
+                }
+                return
+            }
+        }
     }
     
     private func setupSearch() {
@@ -3737,13 +3766,16 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
     }
     
     @objc private func updateProgress() {
-        guard audioProcessor.isCurrentlyPlaying() else { return }
-        
         let currentTime = audioProcessor.getCurrentTime()
         let duration = audioProcessor.getAudioDuration()
         
         progressSlider.value = Float(currentTime)
         currentTimeLabel.text = formatTime(seconds: currentTime)
+        
+        // Update lock screen elapsed time frequently so it stays in sync
+        audioProcessor.syncNowPlayingInfo()
+        
+        guard audioProcessor.isCurrentlyPlaying() else { return }
         
         // If song finishes, update play button icon
         if currentTime >= duration {
@@ -3790,8 +3822,9 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
         
         let navController = UINavigationController(rootViewController: playlistVC)
         if let sheet = navController.sheetPresentationController {
-            sheet.detents = [.medium(), .large()]
+            sheet.detents = [.large(), .medium()]
             sheet.prefersGrabberVisible = true
+            sheet.selectedDetentIdentifier = .large
         }
         
         present(navController, animated: true)
