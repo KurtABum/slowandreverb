@@ -2192,7 +2192,9 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
         
         title = showFavoritesOnly ? "Favorites" : "Library"
         
-        navigationItem.leftBarButtonItem = UIBarButtonItem(barButtonSystemItem: .close, target: self, action: #selector(dismissView))
+        if !showFavoritesOnly {
+            navigationItem.leftBarButtonItem = UIBarButtonItem(barButtonSystemItem: .close, target: self, action: #selector(dismissView))
+        }
         updateRightBarButtons()
         
         navigationController?.navigationBar.prefersLargeTitles = true
@@ -2313,12 +2315,18 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
         
         if editing {
             navigationItem.rightBarButtonItems = [editButtonItem]
-            let deleteBtn = UIBarButtonItem(barButtonSystemItem: .trash, target: self, action: #selector(deleteSelectedSongs))
-            deleteBtn.tintColor = .systemRed
-            deleteBtn.isEnabled = false
-            self.deleteButton = deleteBtn
+            let actionBtn: UIBarButtonItem
+            if showFavoritesOnly {
+                actionBtn = UIBarButtonItem(image: UIImage(systemName: "heart.slash"), style: .plain, target: self, action: #selector(unfavoriteSelectedSongs))
+                actionBtn.tintColor = .systemPink
+            } else {
+                actionBtn = UIBarButtonItem(barButtonSystemItem: .trash, target: self, action: #selector(deleteSelectedSongs))
+                actionBtn.tintColor = .systemRed
+            }
+            actionBtn.isEnabled = false
+            self.deleteButton = actionBtn
             let spacer = UIBarButtonItem(barButtonSystemItem: .flexibleSpace, target: nil, action: nil)
-            toolbarItems = [spacer, deleteBtn]
+            toolbarItems = [spacer, actionBtn]
         } else {
             updateRightBarButtons()
             toolbarItems = nil
@@ -2345,6 +2353,17 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
         present(alert, animated: true)
     }
     
+    @objc private func unfavoriteSelectedSongs() {
+        guard let selectedIndexPaths = tableView.indexPathsForSelectedRows else { return }
+        let songsToUnfavorite = selectedIndexPaths.map { sections[$0.section].songs[$0.row] }
+        
+        for song in songsToUnfavorite {
+            LibraryManager.shared.toggleFavorite(for: song.id)
+        }
+        loadSongs()
+        setEditing(false, animated: true)
+    }
+    
     private func updateRightBarButtons() {
         let currentSortIndex = UserDefaults.standard.integer(forKey: sortOptionKey)
         let currentSort = LibrarySortOption(rawValue: currentSortIndex) ?? .title
@@ -2359,9 +2378,13 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
         })
         
         let sortButton = UIBarButtonItem(image: UIImage(systemName: "arrow.up.arrow.down.circle"), menu: sortMenu)
-        let addButton = UIBarButtonItem(barButtonSystemItem: .add, target: self, action: #selector(addSongTapped))
         
-        navigationItem.rightBarButtonItems = [addButton, sortButton, editButtonItem]
+        if showFavoritesOnly {
+            navigationItem.rightBarButtonItems = [sortButton, editButtonItem]
+        } else {
+            let addButton = UIBarButtonItem(barButtonSystemItem: .add, target: self, action: #selector(addSongTapped))
+            navigationItem.rightBarButtonItems = [addButton, sortButton, editButtonItem]
+        }
     }
     
     @objc private func addSongTapped() {
@@ -2625,7 +2648,11 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
         favoriteAction.image = UIImage(systemName: isFav ? "heart.slash.fill" : "heart.fill")
         favoriteAction.backgroundColor = isFav ? .systemGray : .systemPink
         
-        return UISwipeActionsConfiguration(actions: [deleteAction, favoriteAction, infoAction])
+        if showFavoritesOnly {
+            return UISwipeActionsConfiguration(actions: [favoriteAction, infoAction])
+        } else {
+            return UISwipeActionsConfiguration(actions: [deleteAction, favoriteAction, infoAction])
+        }
     }
     
     private func showSongInfo(_ song: Song) {
