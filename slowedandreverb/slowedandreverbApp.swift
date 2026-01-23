@@ -1974,6 +1974,11 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
             self?.setEditing(false, animated: true)
         }))
         alert.addAction(UIAlertAction(title: "Cancel", style: .cancel, handler: nil))
+        
+        if let popover = alert.popoverPresentationController {
+            popover.barButtonItem = deleteButton
+        }
+        
         present(alert, animated: true)
     }
     
@@ -2225,12 +2230,20 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
             guard let self = self else { completion(false); return }
             
             let songToDelete = self.sections[indexPath.section].songs[indexPath.row]
-            if let index = LibraryManager.shared.songs.firstIndex(where: { $0.id == songToDelete.id }) {
-                LibraryManager.shared.deleteSong(at: index)
-            }
             
-            self.loadSongs()
-            completion(true)
+            let alert = UIAlertController(title: "Delete Song", message: "Are you sure you want to delete \"\(songToDelete.title)\"?", preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: "Cancel", style: .cancel, handler: { _ in
+                completion(false)
+            }))
+            alert.addAction(UIAlertAction(title: "Delete", style: .destructive, handler: { [weak self] _ in
+                if let index = LibraryManager.shared.songs.firstIndex(where: { $0.id == songToDelete.id }) {
+                    LibraryManager.shared.deleteSong(at: index)
+                }
+                self?.loadSongs()
+                completion(true)
+            }))
+            
+            self.present(alert, animated: true)
         }
         deleteAction.image = UIImage(systemName: "trash")
         
