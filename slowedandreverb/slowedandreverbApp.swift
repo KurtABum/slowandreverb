@@ -1830,6 +1830,7 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
     
     weak var delegate: LibraryViewControllerDelegate?
     var currentSongID: UUID?
+    var initialSearchQuery: String?
     
     private let tableView = UITableView()
     private var displayedSongs: [Song] = []
@@ -1851,6 +1852,15 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
         setupUI()
         setupSearch()
         loadSongs()
+    }
+    
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        if let query = initialSearchQuery {
+            searchController.isActive = true
+            searchController.searchBar.text = query
+            initialSearchQuery = nil
+        }
     }
     
     private func setupUI() {
@@ -2671,12 +2681,16 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
         songTitleLabel.font = .systemFont(ofSize: 18, weight: .semibold)
         songTitleLabel.textAlignment = .center
         songTitleLabel.numberOfLines = 0 // Allow title to wrap if long
+        songTitleLabel.isUserInteractionEnabled = true
+        songTitleLabel.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(showSearchMenu)))
         
         // Artist Name Setup
         artistNameLabel.font = .italicSystemFont(ofSize: 16) // Increased font size
         artistNameLabel.textColor = .secondaryLabel
         artistNameLabel.textAlignment = .center
         artistNameLabel.numberOfLines = 0
+        artistNameLabel.isUserInteractionEnabled = true
+        artistNameLabel.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(showSearchMenu)))
         
         let songInfoStack = UIStackView(arrangedSubviews: [songTitleLabel, artistNameLabel])
         songInfoStack.axis = .vertical
@@ -3372,9 +3386,14 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
     }
     
     @objc private func openLibrary() {
+        presentLibrary(withSearch: nil)
+    }
+    
+    private func presentLibrary(withSearch query: String?) {
         let playlistVC = LibraryViewController()
         playlistVC.delegate = self
         playlistVC.currentSongID = self.currentSong?.id
+        playlistVC.initialSearchQuery = query
         
         let navController = UINavigationController(rootViewController: playlistVC)
         if let sheet = navController.sheetPresentationController {
@@ -3383,6 +3402,39 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
         }
         
         present(navController, animated: true)
+    }
+    
+    @objc private func showSearchMenu() {
+        guard let song = currentSong else { return }
+        
+        let alert = UIAlertController(title: nil, message: nil, preferredStyle: .actionSheet)
+        var hasAction = false
+        
+        if let artist = song.artist, !artist.isEmpty {
+            alert.addAction(UIAlertAction(title: "Search Artist", style: .default) { [weak self] _ in
+                self?.presentLibrary(withSearch: artist)
+            })
+            hasAction = true
+        }
+        
+        if let album = song.album, !album.isEmpty {
+            alert.addAction(UIAlertAction(title: "Search Album", style: .default) { [weak self] _ in
+                self?.presentLibrary(withSearch: album)
+            })
+            hasAction = true
+        }
+        
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        
+        if let popover = alert.popoverPresentationController {
+            popover.sourceView = songTitleLabel
+            popover.sourceRect = songTitleLabel.bounds
+        }
+        
+        if hasAction {
+            present(alert, animated: true)
+            impactFeedbackGenerator.impactOccurred()
+        }
     }
     
     @objc private func animateAlbumArtBounce() {
