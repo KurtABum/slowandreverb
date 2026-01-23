@@ -425,12 +425,18 @@ class AudioProcessor {
             return .success
         }
         
-        // Add handler for Like Command (Mapped to Sped Up)
+        // Add handler for Like Command (Mapped to Toggle Presets)
         commandCenter.likeCommand.isEnabled = true
-        commandCenter.likeCommand.localizedTitle = "Sped Up"
+        commandCenter.likeCommand.localizedTitle = "Toggle Preset"
         commandCenter.likeCommand.addTarget { [weak self] _ in
+            guard let self = self else { return .commandFailed }
             runOnMain {
-                self?.onPresetSpedUp?()
+                let currentRate = self.isVarispeedEnabled ? self.varispeedNode.rate : self.timePitchNode.rate
+                if currentRate >= 1.0 {
+                    self.onPresetSlowedReverb?()
+                } else {
+                    self.onPresetSpedUp?()
+                }
             }
             return .success
         }
