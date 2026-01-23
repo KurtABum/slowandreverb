@@ -44,10 +44,13 @@ class AudioProcessor {
     
     // Closure to notify the UI of external playback changes (e.g., from remote commands)
     var onPlaybackStateChanged: (() -> Void)?
+    var onPlaybackRateChanged: ((Float) -> Void)?
     
     // Closures for playlist navigation from remote commands
     var onNextTrack: (() -> Void)?
     var onPreviousTrack: (() -> Void)?
+    var onPresetSlowedReverb: (() -> Void)?
+    var onPresetSpedUp: (() -> Void)?
 
     // MARK: Initialization
 
@@ -244,8 +247,11 @@ class AudioProcessor {
         pausedPosition = nil
         playerNode.play()
         isPlaying = true
-        print("Playback started/resumed.")
-        updateNowPlayingInfo(isPaused: false)
+        print("Playback started/resumed. playerNode.isPlaying = \(playerNode.isPlaying)")
+        // Small delay to ensure audio engine has processed the state change
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+            self?.syncNowPlayingInfo()
+        }
     }
 
     /// Starts or stops the playback and handles file rescheduling for looping.
@@ -264,8 +270,11 @@ class AudioProcessor {
             playerNode.pause()
         }
         isPlaying = false
-        print("Playback paused.")
-        updateNowPlayingInfo(isPaused: true)
+        print("Playback paused. playerNode.isPlaying = \(playerNode.isPlaying)")
+        // Small delay to ensure audio engine has processed the state change
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+            self?.syncNowPlayingInfo()
+        }
     }
     
     /// Seeks to a specific time in the audio file.
@@ -300,7 +309,7 @@ class AudioProcessor {
     }
     
     func isCurrentlyPlaying() -> Bool {
-        return isPlaying
+        return playerNode.isPlaying
     }
     
     /// Returns the total duration of the audio file in seconds.
@@ -334,11 +343,21 @@ class AudioProcessor {
         commandCenter.pauseCommand.isEnabled = true
         commandCenter.togglePlayPauseCommand.isEnabled = true
 
+        // Helper to execute on main thread immediately if possible, to ensure UI updates sync with return .success
+        func runOnMain(_ block: @escaping () -> Void) {
+            if Thread.isMainThread {
+                block()
+            } else {
+                DispatchQueue.main.async(execute: block)
+            }
+        }
+
         // Add handler for Play Command
         commandCenter.playCommand.addTarget { [weak self] event in
             guard let self = self else { return .commandFailed }
-            DispatchQueue.main.async {
+            runOnMain {
                 self.play()
+                self.syncNowPlayingInfo()
                 self.onPlaybackStateChanged?()
             }
             return .success
@@ -347,8 +366,9 @@ class AudioProcessor {
         // Add handler for Pause Command
         commandCenter.pauseCommand.addTarget { [weak self] event in
             guard let self = self else { return .commandFailed }
-            DispatchQueue.main.async {
+            runOnMain {
                 self.pause()
+                self.syncNowPlayingInfo()
                 self.onPlaybackStateChanged?()
             }
             return .success
@@ -357,8 +377,9 @@ class AudioProcessor {
         // Add handler for Toggle Play/Pause Command
         commandCenter.togglePlayPauseCommand.addTarget { [weak self] event in
             guard let self = self else { return .commandFailed }
-            DispatchQueue.main.async {
+            runOnMain {
                 self.togglePlayback()
+                self.syncNowPlayingInfo()
                 self.onPlaybackStateChanged?()
             }
             return .success
@@ -367,21 +388,50 @@ class AudioProcessor {
         // Add handler for seek/scrub
         commandCenter.changePlaybackPositionCommand.addTarget { [weak self] event in
             guard let self = self, let event = event as? MPChangePlaybackPositionCommandEvent else { return .commandFailed }
-            self.seek(to: event.positionTime)
-            self.onPlaybackStateChanged?()
+            runOnMain {
+                self.seek(to: event.positionTime)
+                self.onPlaybackStateChanged?()
+            }
             return .success
         }
         
         // Add handlers for Next/Previous Track
         commandCenter.nextTrackCommand.addTarget { [weak self] event in
             guard let self = self else { return .commandFailed }
-            self.onNextTrack?()
+            runOnMain {
+                self.onNextTrack?()
+            }
             return .success
         }
         
         commandCenter.previousTrackCommand.addTarget { [weak self] event in
             guard let self = self else { return .commandFailed }
-            self.onPreviousTrack?()
+            runOnMain {
+                self.onPreviousTrack?()
+            }
+            return .success
+        }
+        
+        // Disable Playback Rate Command (User reported it does nothing on CarPlay)
+        commandCenter.changePlaybackRateCommand.isEnabled = false
+        
+        // Add handler for Dislike Command (Mapped to Slow + Reverb)
+        commandCenter.dislikeCommand.isEnabled = true
+        commandCenter.dislikeCommand.localizedTitle = "Slow + Reverb"
+        commandCenter.dislikeCommand.addTarget { [weak self] _ in
+            runOnMain {
+                self?.onPresetSlowedReverb?()
+            }
+            return .success
+        }
+        
+        // Add handler for Like Command (Mapped to Sped Up)
+        commandCenter.likeCommand.isEnabled = true
+        commandCenter.likeCommand.localizedTitle = "Sped Up"
+        commandCenter.likeCommand.addTarget { [weak self] _ in
+            runOnMain {
+                self?.onPresetSpedUp?()
+            }
             return .success
         }
         
@@ -391,18 +441,35 @@ class AudioProcessor {
 
     /// Updates the Now Playing information on the lock screen and Control Center.
     func updateNowPlayingInfo(isPaused: Bool = false) {
-        guard var info = self.nowPlayingInfo else {
-            // Clear now playing info if no file is loaded
-            MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
-            return
-        }
-        
-        // Update only the dynamic properties: elapsed time and playback rate.
-        info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = getCurrentTime()
-        info[MPNowPlayingInfoPropertyPlaybackRate] = isPaused ? 0.0 : (isVarispeedEnabled ? varispeedNode.rate : timePitchNode.rate)
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self, var info = self.nowPlayingInfo else {
+                print("updateNowPlayingInfo: No nowPlayingInfo available")
+                MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+                return
+            }
+            
+            // Use actual player node state as source of truth
+            let actuallyPlaying = self.playerNode.isPlaying
+            let playbackRate = !actuallyPlaying ? 0.0 : (self.isVarispeedEnabled ? self.varispeedNode.rate : self.timePitchNode.rate)
+            
+            print("updateNowPlayingInfo: actuallyPlaying=\(actuallyPlaying), playbackRate=\(playbackRate)")
+            
+            // Update only the dynamic properties: elapsed time and playback rate.
+            info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = self.getCurrentTime()
+            info[MPNowPlayingInfoPropertyPlaybackRate] = playbackRate
 
-        // Set the updated information.
-        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+            // Set the updated information.
+            MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+            print("updateNowPlayingInfo: Lock screen updated with rate=\(playbackRate)")
+        }
+    }
+    
+    /// Syncs the now playing info with the current playback state.
+    /// Call this whenever playback state might have changed.
+    func syncNowPlayingInfo() {
+        let isPlaying = playerNode.isPlaying
+        print("syncNowPlayingInfo called: playerNode.isPlaying = \(isPlaying)")
+        updateNowPlayingInfo(isPaused: !isPlaying)
     }
     
     /// Enables or disables the remote commands for playlist navigation.
@@ -475,6 +542,7 @@ class AudioProcessor {
             }
         }
         updateNowPlayingInfo(isPaused: !isPlaying)
+        onPlaybackRateChanged?(rate)
     }
     
     /// Enables or disables Varispeed mode (High Quality Link Pitch & Speed).
@@ -2515,9 +2583,26 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
     private func setupAudioProcessorHandler() {
         audioProcessor.onPlaybackStateChanged = { [weak self] in
             self?.updatePlayPauseButtonState()
+            self?.audioProcessor.syncNowPlayingInfo()
+        }
+        audioProcessor.onPlaybackRateChanged = { [weak self] rate in
+            guard let self = self else { return }
+            self.speedSlider.setValue(rate, animated: true)
+            self.speedLabel.text = String(format: "Speed (%.2fx)", rate)
+            UserDefaults.standard.set(rate, forKey: "speedValue")
         }
         audioProcessor.onNextTrack = { [weak self] in self?.playNextSong() }
         audioProcessor.onPreviousTrack = { [weak self] in self?.playPreviousSong() }
+        audioProcessor.onPresetSlowedReverb = { [weak self] in
+            DispatchQueue.main.async {
+                self?.applySlowedReverbPreset()
+            }
+        }
+        audioProcessor.onPresetSpedUp = { [weak self] in
+            DispatchQueue.main.async {
+                self?.applySpedUpPreset()
+            }
+        }
     }
 
     private func setupUI() {
@@ -2937,6 +3022,9 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
     
     /// Hides/shows the controls until a file is loaded.
     private func resetControlsState(isHidden: Bool) {
+        // Enable/Disable Lock Screen Next/Prev buttons based on whether a file is loaded
+        audioProcessor.updatePlaylistRemoteCommands(isEnabled: !isHidden)
+        
         playPauseButton.isHidden = isHidden
         rewindButton.isHidden = isHidden
         skipButton.isHidden = isHidden
