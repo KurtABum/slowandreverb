@@ -2993,7 +2993,9 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
     // Library state
     private var currentSong: Song?
     private var isShuffling = false
-    private var playbackQueue: [Song] = []
+    private var playbackQueue: [Song] = [] {
+        didSet { MPPlayableContentManager.shared().reloadData() }
+    }
     private var currentQueueIndex: Int = -1
     private var currentPresetIndex: Int?
     
@@ -3020,6 +3022,7 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
         setupSliderLabelTapGestures(isEnabled: UserDefaults.standard.bool(forKey: "isResetSlidersOnTapEnabled"))
         impactFeedbackGenerator.prepare()
         selectionFeedbackGenerator.prepare()
+        setupCarPlay()
     }
     
     override func viewDidAppear(_ animated: Bool) {
@@ -4457,7 +4460,7 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
         impactFeedbackGenerator.impactOccurred()
     }
     
-    private func getSortedLibrarySongs() -> [Song] {
+    func getSortedLibrarySongs() -> [Song] {
         var songs = LibraryManager.shared.songs
         let sortOptionKey = "librarySortOption"
         let sortIndex = UserDefaults.standard.integer(forKey: sortOptionKey)
@@ -4798,6 +4801,60 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
                     self?.present(errorAlert, animated: true)
                 }
             }
+        }
+    }
+    
+    // MARK: - CarPlay Support
+    
+    private func setupCarPlay() {
+        MPPlayableContentManager.shared().dataSource = self
+        MPPlayableContentManager.shared().delegate = self
+        MPPlayableContentManager.shared().reloadData()
+    }
+    
+    private func getEffectiveQueue() -> [Song] {
+        if !playbackQueue.isEmpty {
+            return playbackQueue
+        }
+        return getSortedLibrarySongs()
+    }
+}
+
+extension AudioEffectsViewController: MPPlayableContentDataSource, MPPlayableContentDelegate {
+    func numberOfChildItems(at indexPath: IndexPath) -> Int {
+        if indexPath.count == 0 { // Root level
+            return getEffectiveQueue().count
+        }
+        return 0
+    }
+    
+    func contentItem(at indexPath: IndexPath) -> MPContentItem? {
+        let songs = getEffectiveQueue()
+        guard indexPath.row < songs.count else { return nil }
+        let song = songs[indexPath.row]
+        
+        let item = MPContentItem(identifier: song.id.uuidString)
+        item.title = song.title
+        item.subtitle = song.artist
+        item.isPlayable = true
+        item.isContainer = false
+        return item
+    }
+    
+    func playableContentManager(_ contentManager: MPPlayableContentManager, initiatePlaybackOfContentItemAt indexPath: IndexPath, completionHandler: @escaping (Error?) -> Void) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { completionHandler(nil); return }
+            let songs = self.getEffectiveQueue()
+            guard indexPath.row < songs.count else { completionHandler(nil); return }
+            
+            // If we are selecting from the library (implicit queue), populate the playbackQueue
+            if self.playbackQueue.isEmpty {
+                self.playbackQueue = songs
+            }
+            
+            self.currentQueueIndex = indexPath.row
+            self.loadSong(songs[indexPath.row], andPlay: true)
+            completionHandler(nil)
         }
     }
 }
