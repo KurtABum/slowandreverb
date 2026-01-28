@@ -2895,6 +2895,83 @@ class SongTableViewCell: UITableViewCell {
 
 // MARK: - 2. User Interface and File Picker
 
+class QueueViewController: UITableViewController {
+    var songs: [Song] = []
+    var currentIndex: Int = 0
+    var onSelect: ((Int) -> Void)?
+    var onDelete: ((Int) -> Void)?
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        title = "Up Next"
+        tableView.register(UITableViewCell.self, forCellReuseIdentifier: "QueueCell")
+        navigationItem.rightBarButtonItem = UIBarButtonItem(barButtonSystemItem: .done, target: self, action: #selector(dismissSelf))
+        
+        // Scroll to current song
+        DispatchQueue.main.async {
+            if self.songs.indices.contains(self.currentIndex) {
+                let indexPath = IndexPath(row: self.currentIndex, section: 0)
+                self.tableView.scrollToRow(at: indexPath, at: .top, animated: false)
+            }
+        }
+    }
+
+    @objc private func dismissSelf() {
+        dismiss(animated: true)
+    }
+
+    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
+        return songs.count
+    }
+
+    override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+        let cell = tableView.dequeueReusableCell(withIdentifier: "QueueCell", for: indexPath)
+        let song = songs[indexPath.row]
+        var content = cell.defaultContentConfiguration()
+        content.text = song.title
+        content.secondaryText = song.artist
+        
+        if indexPath.row == currentIndex {
+            content.image = UIImage(systemName: "speaker.wave.3.fill")
+            content.imageProperties.tintColor = .systemBlue
+            content.textProperties.color = .systemBlue
+        } else if indexPath.row < currentIndex {
+            content.image = UIImage(systemName: "clock")
+            content.imageProperties.tintColor = .tertiaryLabel
+            content.textProperties.color = .secondaryLabel
+            content.secondaryTextProperties.color = .tertiaryLabel
+        } else {
+            content.image = UIImage(systemName: "music.note")
+            content.imageProperties.tintColor = .secondaryLabel
+            content.textProperties.color = .label
+        }
+        
+        cell.contentConfiguration = content
+        return cell
+    }
+
+    override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+        tableView.deselectRow(at: indexPath, animated: true)
+        onSelect?(indexPath.row)
+        dismiss(animated: true)
+    }
+    
+    override func tableView(_ tableView: UITableView, canEditRowAt indexPath: IndexPath) -> Bool {
+        return indexPath.row != currentIndex
+    }
+    
+    override func tableView(_ tableView: UITableView, commit editingStyle: UITableViewCell.EditingStyle, forRowAt indexPath: IndexPath) {
+        if editingStyle == .delete {
+            onDelete?(indexPath.row)
+            songs.remove(at: indexPath.row)
+            if indexPath.row < currentIndex {
+                currentIndex -= 1
+            }
+            tableView.deleteRows(at: [indexPath], with: .fade)
+        }
+    }
+}
+
 class AudioEffectsViewController: UIViewController, SettingsViewControllerDelegate, LibraryViewControllerDelegate {
 
     // MARK: Properties
@@ -2916,6 +2993,7 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
     private let saveValuesButton = UIButton(type: .system)
     private let favoriteButton = UIButton(type: .system)
     private let repeatButton = UIButton(type: .system)
+    private let queueButton = UIButton(type: .system)
     private let settingsIconButton = UIButton(type: .system)
     
     private let progressSlider = UISlider()
@@ -3294,10 +3372,26 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
         repeatButton.configuration = repeatConfig
         repeatButton.addTarget(self, action: #selector(toggleRepeatTapped), for: .touchUpInside)
         
-        let extraActionsStack = UIStackView(arrangedSubviews: [favoriteButton, repeatButton])
-        extraActionsStack.axis = .horizontal
-        extraActionsStack.spacing = 20
-        extraActionsStack.distribution = .fillEqually
+        // Queue Button
+        var queueConfig = UIButton.Configuration.filled()
+        queueConfig.title = "Queue"
+        queueConfig.image = UIImage(systemName: "list.bullet")
+        queueConfig.imagePadding = 8
+        queueConfig.baseBackgroundColor = .secondarySystemFill
+        queueConfig.baseForegroundColor = .label
+        queueConfig.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 20, bottom: 12, trailing: 20)
+        queueButton.configuration = queueConfig
+        queueButton.addTarget(self, action: #selector(openQueue), for: .touchUpInside)
+        
+        let favRepeatStack = UIStackView(arrangedSubviews: [favoriteButton, repeatButton])
+        favRepeatStack.axis = .horizontal
+        favRepeatStack.spacing = 20
+        favRepeatStack.distribution = .fillEqually
+        
+        let extraActionsStack = UIStackView(arrangedSubviews: [favRepeatStack, queueButton])
+        extraActionsStack.axis = .vertical
+        extraActionsStack.spacing = 12
+        extraActionsStack.distribution = .fill
         
         // Settings Icon Button (Top Right)
         settingsIconButton.setImage(UIImage(systemName: "gearshape.fill"), for: .normal)
@@ -3382,6 +3476,7 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
         stackView.setCustomSpacing(12, after: midsControlStack)
         stackView.setCustomSpacing(20, after: trebleControlStack)
         stackView.setCustomSpacing(10, after: extraActionsStack)
+        stackView.setCustomSpacing(40, after: extraActionsStack)
         stackView.setCustomSpacing(10, after: saveValuesButton)
         stackView.setCustomSpacing(40, after: presetsStack)
         
@@ -3528,6 +3623,7 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
         saveValuesButton.isHidden = isHidden
         favoriteButton.isHidden = isHidden
         repeatButton.isHidden = isHidden
+        queueButton.isHidden = isHidden
         exportButton.isHidden = isHidden
         progressSlider.isHidden = isHidden
         currentTimeLabel.isHidden = isHidden
@@ -3869,6 +3965,53 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
         }
         
         present(navController, animated: true)
+    }
+    
+    @objc private func openQueue() {
+        let queueVC = QueueViewController()
+        let songs = getEffectiveQueue()
+        queueVC.songs = songs
+        
+        if !playbackQueue.isEmpty {
+            queueVC.currentIndex = currentQueueIndex
+        } else if let current = currentSong {
+            queueVC.currentIndex = songs.firstIndex(where: { $0.id == current.id }) ?? 0
+        }
+        
+        queueVC.onSelect = { [weak self] index in
+            guard let self = self else { return }
+            if self.playbackQueue.isEmpty {
+                self.playbackQueue = songs
+            }
+            self.currentQueueIndex = index
+            self.loadSong(songs[index], andPlay: true)
+        }
+        
+        queueVC.onDelete = { [weak self] index in
+            guard let self = self else { return }
+            
+            if self.playbackQueue.isEmpty {
+                self.playbackQueue = songs
+                if let current = self.currentSong {
+                    self.currentQueueIndex = self.playbackQueue.firstIndex(where: { $0.id == current.id }) ?? 0
+                }
+            }
+            
+            if self.playbackQueue.indices.contains(index) {
+                self.playbackQueue.remove(at: index)
+                if index < self.currentQueueIndex {
+                    self.currentQueueIndex -= 1
+                }
+            }
+        }
+        
+        let nav = UINavigationController(rootViewController: queueVC)
+        if let sheet = nav.sheetPresentationController {
+            sheet.detents = [.medium(), .large()]
+            sheet.prefersGrabberVisible = true
+        }
+        present(nav, animated: true)
+        impactFeedbackGenerator.impactOccurred()
     }
     
     @objc private func showSearchMenu(_ sender: UITapGestureRecognizer) {
