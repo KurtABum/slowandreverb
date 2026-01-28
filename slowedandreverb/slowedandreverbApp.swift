@@ -161,6 +161,7 @@ class AudioProcessor {
             let metadata = asset.commonMetadata
             var songTitle: String?
             var artistName: String?
+            var albumName: String?
             var artworkImage: UIImage?
             
             for item in metadata {
@@ -169,6 +170,8 @@ class AudioProcessor {
                     songTitle = title
                 } else if item.commonKey == AVMetadataKey.commonKeyArtist, let artist = item.stringValue {
                     artistName = artist
+                } else if item.commonKey == AVMetadataKey.commonKeyAlbumName, let album = item.stringValue {
+                    albumName = album
                 } else if item.commonKey == AVMetadataKey.commonKeyArtwork, let data = item.dataValue {
                     artworkImage = UIImage(data: data)
                 }
@@ -178,6 +181,7 @@ class AudioProcessor {
             self.nowPlayingInfo = [
                 MPMediaItemPropertyTitle: songTitle ?? url.deletingPathExtension().lastPathComponent,
                 MPMediaItemPropertyArtist: artistName,
+                MPMediaItemPropertyAlbumTitle: albumName,
                 MPMediaItemPropertyPlaybackDuration: getAudioDuration(),
                 MPNowPlayingInfoPropertyElapsedPlaybackTime: 0.0,
                 MPNowPlayingInfoPropertyPlaybackRate: 0.0  // Initially paused
