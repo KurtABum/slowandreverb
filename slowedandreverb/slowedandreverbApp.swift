@@ -2910,6 +2910,8 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
     private let playPauseButton = UIButton(type: .system)
     private let libraryButton = UIButton(type: .system)
     private let saveValuesButton = UIButton(type: .system)
+    private let favoriteButton = UIButton(type: .system)
+    private let repeatButton = UIButton(type: .system)
     private let settingsIconButton = UIButton(type: .system)
     
     private let progressSlider = UISlider()
@@ -3263,6 +3265,33 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
         saveValuesButton.configuration = saveValuesConfig
         saveValuesButton.addTarget(self, action: #selector(saveValuesTapped), for: .touchUpInside)
         
+        // Favorite Button
+        var favConfig = UIButton.Configuration.filled()
+        favConfig.title = "Favorite"
+        favConfig.image = UIImage(systemName: "heart")
+        favConfig.imagePadding = 8
+        favConfig.baseBackgroundColor = .secondarySystemFill
+        favConfig.baseForegroundColor = .label
+        favConfig.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 20, bottom: 12, trailing: 20)
+        favoriteButton.configuration = favConfig
+        favoriteButton.addTarget(self, action: #selector(toggleFavoriteTapped), for: .touchUpInside)
+        
+        // Repeat Button
+        var repeatConfig = UIButton.Configuration.filled()
+        repeatConfig.title = "Repeat"
+        repeatConfig.image = UIImage(systemName: "repeat")
+        repeatConfig.imagePadding = 8
+        repeatConfig.baseBackgroundColor = .secondarySystemFill
+        repeatConfig.baseForegroundColor = .label
+        repeatConfig.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 20, bottom: 12, trailing: 20)
+        repeatButton.configuration = repeatConfig
+        repeatButton.addTarget(self, action: #selector(toggleRepeatTapped), for: .touchUpInside)
+        
+        let extraActionsStack = UIStackView(arrangedSubviews: [favoriteButton, repeatButton])
+        extraActionsStack.axis = .horizontal
+        extraActionsStack.spacing = 20
+        extraActionsStack.distribution = .fillEqually
+        
         // Settings Icon Button (Top Right)
         settingsIconButton.setImage(UIImage(systemName: "gearshape.fill"), for: .normal)
         settingsIconButton.addTarget(self, action: #selector(openSettings), for: .touchUpInside)
@@ -3330,6 +3359,7 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
             trebleControlStack,
             UIView(), // Spacer
             presetsStack,
+            extraActionsStack,
             saveValuesButton,
             actionButtonsStack,
         ])
@@ -3344,6 +3374,7 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
         stackView.setCustomSpacing(12, after: bassControlStack)
         stackView.setCustomSpacing(12, after: midsControlStack)
         stackView.setCustomSpacing(20, after: trebleControlStack)
+        stackView.setCustomSpacing(10, after: extraActionsStack)
         stackView.setCustomSpacing(10, after: saveValuesButton)
         stackView.setCustomSpacing(40, after: presetsStack)
         
@@ -3419,6 +3450,7 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
             progressStack.widthAnchor.constraint(equalTo: stackView.widthAnchor),
             actionButtonsStack.widthAnchor.constraint(equalTo: stackView.widthAnchor),
             saveValuesButton.widthAnchor.constraint(equalTo: stackView.widthAnchor),
+            extraActionsStack.widthAnchor.constraint(equalTo: stackView.widthAnchor),
             presetsStack.widthAnchor.constraint(equalTo: stackView.widthAnchor)
         ])
         
@@ -3487,6 +3519,8 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
         nextTrackButton.isHidden = isHidden
         resetButton.isHidden = isHidden
         saveValuesButton.isHidden = isHidden
+        favoriteButton.isHidden = isHidden
+        repeatButton.isHidden = isHidden
         exportButton.isHidden = isHidden
         progressSlider.isHidden = isHidden
         currentTimeLabel.isHidden = isHidden
@@ -3850,6 +3884,24 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
             hasAction = true
         }
         
+        if let artist = song.artist, !artist.isEmpty {
+            alert.addAction(UIAlertAction(title: "Shuffle Artist", style: .default) { [weak self] _ in
+                guard let self = self else { return }
+                let artistSongs = LibraryManager.shared.songs.filter { ($0.artist ?? "").localizedCaseInsensitiveCompare(artist) == .orderedSame }
+                self.playShuffled(songs: artistSongs)
+            })
+            hasAction = true
+        }
+        
+        if let album = song.album, !album.isEmpty {
+            alert.addAction(UIAlertAction(title: "Shuffle Album", style: .default) { [weak self] _ in
+                guard let self = self else { return }
+                let albumSongs = LibraryManager.shared.songs.filter { ($0.album ?? "").localizedCaseInsensitiveCompare(album) == .orderedSame }
+                self.playShuffled(songs: albumSongs)
+            })
+            hasAction = true
+        }
+        
         alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
         
         if let popover = alert.popoverPresentationController {
@@ -3861,6 +3913,50 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
             present(alert, animated: true)
             impactFeedbackGenerator.impactOccurred()
         }
+    }
+    
+    private func playShuffled(songs: [Song]) {
+        guard !songs.isEmpty else { return }
+        
+        isShuffling = true
+        playbackQueue = songs.shuffled()
+        currentQueueIndex = 0
+        
+        // Turn on auto play next and turn off repeat song
+        settingsViewController(SettingsViewController(), didChangeAutoPlayNextState: true)
+        settingsViewController(SettingsViewController(), didChangeLoopingState: false)
+        loadSong(playbackQueue[currentQueueIndex], andPlay: true)
+    }
+    
+    @objc private func toggleFavoriteTapped() {
+        guard var song = currentSong else { return }
+        LibraryManager.shared.toggleFavorite(for: song.id)
+        song.isFavorite = !(song.isFavorite ?? false)
+        currentSong = song
+        updateFavoriteButtonState()
+        impactFeedbackGenerator.impactOccurred()
+    }
+    
+    private func updateFavoriteButtonState() {
+        guard let song = currentSong else { return }
+        let isFav = song.isFavorite ?? false
+        let imageName = isFav ? "heart.fill" : "heart"
+        favoriteButton.configuration?.image = UIImage(systemName: imageName)
+        favoriteButton.configuration?.baseForegroundColor = isFav ? .systemPink : .label
+    }
+    
+    @objc private func toggleRepeatTapped() {
+        isLoopingEnabled.toggle()
+        UserDefaults.standard.set(isLoopingEnabled, forKey: "isLoopingEnabled")
+        updateRepeatButtonState()
+        impactFeedbackGenerator.impactOccurred()
+    }
+    
+    private func updateRepeatButtonState() {
+        let imageName = isLoopingEnabled ? "repeat.1" : "repeat"
+        repeatButton.configuration?.image = UIImage(systemName: imageName)
+        repeatButton.configuration?.baseBackgroundColor = isLoopingEnabled ? .systemBlue : .secondarySystemFill
+        repeatButton.configuration?.baseForegroundColor = isLoopingEnabled ? .white : .label
     }
     
     @objc private func animateAlbumArtBounce() {
@@ -4016,6 +4112,7 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
     func settingsViewController(_ controller: SettingsViewController, didChangeLoopingState isEnabled: Bool) {
         self.isLoopingEnabled = isEnabled
         UserDefaults.standard.set(isEnabled, forKey: "isLoopingEnabled")
+        updateRepeatButtonState()
     }
     
     func settingsViewController(_ controller: SettingsViewController, didChangeRememberSettingsState isEnabled: Bool) {
@@ -4416,6 +4513,8 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
             resetControlsState(isHidden: false)
             resetButton.isHidden = false
             saveValuesButton.isHidden = false
+            updateFavoriteButtonState()
+            updateRepeatButtonState()
             exportButton.isHidden = !UserDefaults.standard.bool(forKey: "isExportButtonEnabled", defaultValue: true)
 
             // Re-apply reverb slider visibility based on user settings
@@ -4458,16 +4557,7 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
     }
     
     func libraryViewController(_ controller: LibraryViewController, didTapShuffleWith songs: [Song]) {
-        guard !songs.isEmpty else { return }
-        
-        isShuffling = true
-        playbackQueue = songs.shuffled()
-        currentQueueIndex = 0
-        
-        // Turn on auto play next and turn off repeat song
-        settingsViewController(SettingsViewController(), didChangeAutoPlayNextState: true)
-        settingsViewController(SettingsViewController(), didChangeLoopingState: false)
-        loadSong(playbackQueue[currentQueueIndex], andPlay: true)
+        playShuffled(songs: songs)
     }
     
     @objc private func saveValuesTapped() {
