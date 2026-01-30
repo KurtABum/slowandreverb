@@ -1323,6 +1323,7 @@ class SettingsViewController: UIViewController {
     private var interfaceGroups: [UIView] = []
     private var themeGroups: [UIView] = []
     private var extrasGroups: [UIView] = []
+    private var presetsGroups: [UIView] = []
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -1669,9 +1670,12 @@ class SettingsViewController: UIViewController {
         extrasGroups = [
             rememberSettingsGroup,
             autoLoadAddedSongGroup,
-            showPresetsGroup,
-            slowedReverbSpeedGroup,
             scanDuplicatesGroup
+        ]
+        
+        presetsGroups = [
+            showPresetsGroup,
+            slowedReverbSpeedGroup
         ]
         
         // --- Folder Buttons ---
@@ -1711,10 +1715,11 @@ class SettingsViewController: UIViewController {
         let interfaceFolder = createFolderButton(title: "Interface", action: #selector(openInterfaceSettings))
         let themeFolder = createFolderButton(title: "Theme", action: #selector(openThemeSettings))
         let extrasFolder = createFolderButton(title: "Extras", action: #selector(openExtrasSettings))
+        let presetsFolder = createFolderButton(title: "Presets", action: #selector(openPresetsFolder))
         
-        // Add Presets button to extrasGroups
-        let presetsFolder = createFolderButton(title: "Manage Presets", action: #selector(openPresetsSettings))
-        extrasGroups.insert(presetsFolder, at: 0)
+        // Add Manage Presets button to presetsGroups
+        let managePresetsButton = createFolderButton(title: "Manage Presets", action: #selector(openPresetsSettings))
+        presetsGroups.insert(managePresetsButton, at: 0)
 
         // --- Main Settings Stack ---
         let settingsOptionsStack = UIStackView(arrangedSubviews: [
@@ -1732,6 +1737,7 @@ class SettingsViewController: UIViewController {
             // Folders
             interfaceFolder,
             themeFolder,
+            presetsFolder,
             extrasFolder
         ])
         settingsOptionsStack.axis = .vertical
@@ -1988,6 +1994,13 @@ class SettingsViewController: UIViewController {
         let vc = SubSettingsViewController()
         vc.title = "Extras"
         vc.contentViews = extrasGroups
+        navigationController?.pushViewController(vc, animated: true)
+    }
+    
+    @objc private func openPresetsFolder() {
+        let vc = SubSettingsViewController()
+        vc.title = "Presets"
+        vc.contentViews = presetsGroups
         navigationController?.pushViewController(vc, animated: true)
     }
     
