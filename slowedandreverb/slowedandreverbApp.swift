@@ -405,6 +405,35 @@ class AudioProcessor {
             return .success
         }
         
+        // Add handler for Skip Forward Command (Siri)
+        commandCenter.skipForwardCommand.isEnabled = true
+        commandCenter.skipForwardCommand.preferredIntervals = [15, 30, 60]
+        commandCenter.skipForwardCommand.addTarget { [weak self] event in
+            guard let self = self, let event = event as? MPSkipIntervalCommandEvent else { return .commandFailed }
+            runOnMain {
+                let currentTime = self.getCurrentTime()
+                let duration = self.getAudioDuration()
+                let newTime = min(duration, currentTime + event.interval)
+                self.seek(to: newTime)
+                self.onPlaybackStateChanged?()
+            }
+            return .success
+        }
+
+        // Add handler for Skip Backward Command (Siri)
+        commandCenter.skipBackwardCommand.isEnabled = true
+        commandCenter.skipBackwardCommand.preferredIntervals = [15, 30, 60]
+        commandCenter.skipBackwardCommand.addTarget { [weak self] event in
+            guard let self = self, let event = event as? MPSkipIntervalCommandEvent else { return .commandFailed }
+            runOnMain {
+                let currentTime = self.getCurrentTime()
+                let newTime = max(0, currentTime - event.interval)
+                self.seek(to: newTime)
+                self.onPlaybackStateChanged?()
+            }
+            return .success
+        }
+        
         // Add handlers for Next/Previous Track
         commandCenter.nextTrackCommand.addTarget { [weak self] event in
             guard let self = self else { return .commandFailed }
