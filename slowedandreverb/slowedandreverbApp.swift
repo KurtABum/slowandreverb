@@ -2125,6 +2125,7 @@ class LibraryManager {
 protocol LibraryViewControllerDelegate: AnyObject {
     func libraryViewController(_ controller: LibraryViewController, didSelectSong song: Song, in songs: [Song])
     func libraryViewController(_ controller: LibraryViewController, didTapShuffleWith songs: [Song])
+    func libraryViewController(_ controller: LibraryViewController, didRequestPlayNext song: Song)
 }
 
 private enum LibrarySortOption: Int, CaseIterable {
@@ -2688,6 +2689,49 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
         }
     }
     
+    func tableView(_ tableView: UITableView, contextMenuConfigurationForRowAt indexPath: IndexPath, point: CGPoint) -> UIContextMenuConfiguration? {
+        guard indexPath.section < sections.count,
+              indexPath.row < sections[indexPath.section].songs.count else { return nil }
+        
+        let song = sections[indexPath.section].songs[indexPath.row]
+        
+        return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { _ in
+            
+            let infoAction = UIAction(title: "Info", image: UIImage(systemName: "info.circle")) { [weak self] _ in
+                self?.showSongInfo(song)
+            }
+            
+            let playNextAction = UIAction(title: "Play Next", image: UIImage(systemName: "text.line.first.and.arrowtriangle.forward")) { [weak self] _ in
+                guard let self = self else { return }
+                self.delegate?.libraryViewController(self, didRequestPlayNext: song)
+            }
+            
+            let isFav = song.isFavorite ?? false
+            let favTitle = isFav ? "Unfavorite" : "Favorite"
+            let favImage = UIImage(systemName: isFav ? "heart.slash.fill" : "heart.fill")
+            let favoriteAction = UIAction(title: favTitle, image: favImage) { [weak self] _ in
+                guard let self = self else { return }
+                LibraryManager.shared.toggleFavorite(for: song.id)
+                self.loadSongs()
+            }
+            
+            let deleteAction = UIAction(title: "Delete", image: UIImage(systemName: "trash"), attributes: .destructive) { [weak self] _ in
+                guard let self = self else { return }
+                let alert = UIAlertController(title: "Delete Song", message: "Are you sure you want to delete \"\(song.title)\"?", preferredStyle: .alert)
+                alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+                alert.addAction(UIAlertAction(title: "Delete", style: .destructive, handler: { [weak self] _ in
+                    if let index = LibraryManager.shared.songs.firstIndex(where: { $0.id == song.id }) {
+                        LibraryManager.shared.deleteSong(at: index)
+                    }
+                    self?.loadSongs()
+                }))
+                self.present(alert, animated: true)
+            }
+            
+            return UIMenu(title: "", children: [playNextAction, infoAction, favoriteAction, deleteAction])
+        }
+    }
+    
     private func showSongInfo(_ song: Song) {
         var message = "Title: \(song.title)\nArtist: \(song.artist ?? "Unknown")\nAlbum: \(song.album ?? "Unknown")\n\nSaved Settings:\n"
         message += "Pitch: \(song.savedPitch.map { "\(Int($0)) cents" } ?? "Default (0)")\n"
@@ -2900,12 +2944,14 @@ class QueueViewController: UITableViewController {
     var currentIndex: Int = 0
     var onSelect: ((Int) -> Void)?
     var onDelete: ((Int) -> Void)?
+    var onReorder: (([Song], Int) -> Void)?
 
     override func viewDidLoad() {
         super.viewDidLoad()
         title = "Up Next"
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "QueueCell")
         navigationItem.rightBarButtonItem = UIBarButtonItem(barButtonSystemItem: .done, target: self, action: #selector(dismissSelf))
+        navigationItem.leftBarButtonItem = editButtonItem
         
         // Scroll to current song
         DispatchQueue.main.async {
@@ -2968,6 +3014,30 @@ class QueueViewController: UITableViewController {
                 currentIndex -= 1
             }
             tableView.deleteRows(at: [indexPath], with: .fade)
+        }
+    }
+
+    override func setEditing(_ editing: Bool, animated: Bool) {
+        super.setEditing(editing, animated: animated)
+        if !editing {
+            onReorder?(songs, currentIndex)
+        }
+    }
+
+    override func tableView(_ tableView: UITableView, canMoveRowAt indexPath: IndexPath) -> Bool {
+        return true
+    }
+
+    override func tableView(_ tableView: UITableView, moveRowAt sourceIndexPath: IndexPath, to destinationIndexPath: IndexPath) {
+        let movedSong = songs.remove(at: sourceIndexPath.row)
+        songs.insert(movedSong, at: destinationIndexPath.row)
+
+        if currentIndex == sourceIndexPath.row {
+            currentIndex = destinationIndexPath.row
+        } else if sourceIndexPath.row < currentIndex && destinationIndexPath.row >= currentIndex {
+            currentIndex -= 1
+        } else if sourceIndexPath.row > currentIndex && destinationIndexPath.row <= currentIndex {
+            currentIndex += 1
         }
     }
 }
@@ -4005,6 +4075,12 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
             }
         }
         
+        queueVC.onReorder = { [weak self] reorderedSongs, newCurrentIndex in
+            guard let self = self else { return }
+            self.playbackQueue = reorderedSongs
+            self.currentQueueIndex = newCurrentIndex
+        }
+        
         let nav = UINavigationController(rootViewController: queueVC)
         if let sheet = nav.sheetPresentationController {
             sheet.detents = [.medium(), .large()]
@@ -4708,6 +4784,34 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
     
     func libraryViewController(_ controller: LibraryViewController, didTapShuffleWith songs: [Song]) {
         playShuffled(songs: songs)
+    }
+    
+    func libraryViewController(_ controller: LibraryViewController, didRequestPlayNext song: Song) {
+        if playbackQueue.isEmpty {
+            if let current = currentSong {
+                playbackQueue = [current, song]
+                currentQueueIndex = 0
+            } else {
+                loadSong(song, andPlay: true)
+                playbackQueue = [song]
+                currentQueueIndex = 0
+                return
+            }
+        } else {
+            let insertIndex = currentQueueIndex + 1
+            if insertIndex <= playbackQueue.count {
+                playbackQueue.insert(song, at: insertIndex)
+            } else {
+                playbackQueue.append(song)
+            }
+        }
+        impactFeedbackGenerator.impactOccurred()
+        
+        let toast = UIAlertController(title: nil, message: "Playing Next", preferredStyle: .alert)
+        controller.present(toast, animated: true)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+            toast.dismiss(animated: true)
+        }
     }
     
     @objc private func saveValuesTapped() {
