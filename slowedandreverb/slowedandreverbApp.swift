@@ -2945,6 +2945,8 @@ class QueueViewController: UITableViewController {
     var onSelect: ((Int) -> Void)?
     var onDelete: ((Int) -> Void)?
     var onReorder: (([Song], Int) -> Void)?
+    var onLoadMore: (() -> Void)?
+    private let artworkCache = NSCache<NSString, UIImage>()
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -2960,6 +2962,33 @@ class QueueViewController: UITableViewController {
                 self.tableView.scrollToRow(at: indexPath, at: .top, animated: false)
             }
         }
+        setupLoadMoreFooter()
+    }
+
+    func setupLoadMoreFooter() {
+        if onLoadMore != nil {
+            let footerView = UIView(frame: CGRect(x: 0, y: 0, width: tableView.frame.width, height: 60))
+            let button = UIButton(type: .system)
+            var config = UIButton.Configuration.plain()
+            config.title = "Load More"
+            button.configuration = config
+            button.addTarget(self, action: #selector(loadMoreTapped), for: .touchUpInside)
+            button.translatesAutoresizingMaskIntoConstraints = false
+            footerView.addSubview(button)
+            
+            NSLayoutConstraint.activate([
+                button.centerXAnchor.constraint(equalTo: footerView.centerXAnchor),
+                button.centerYAnchor.constraint(equalTo: footerView.centerYAnchor)
+            ])
+            
+            tableView.tableFooterView = footerView
+        } else {
+            tableView.tableFooterView = nil
+        }
+    }
+
+    @objc private func loadMoreTapped() {
+        onLoadMore?()
     }
 
     @objc private func dismissSelf() {
@@ -2977,19 +3006,46 @@ class QueueViewController: UITableViewController {
         content.text = song.title
         content.secondaryText = song.artist
         
-        if indexPath.row == currentIndex {
-            content.image = UIImage(systemName: "speaker.wave.3.fill")
-            content.imageProperties.tintColor = .systemBlue
-            content.textProperties.color = .systemBlue
-        } else if indexPath.row < currentIndex {
-            content.image = UIImage(systemName: "clock")
-            content.imageProperties.tintColor = .tertiaryLabel
-            content.textProperties.color = .secondaryLabel
-            content.secondaryTextProperties.color = .tertiaryLabel
+        // Album Art
+        let cacheKey = song.id.uuidString as NSString
+        if let cachedImage = artworkCache.object(forKey: cacheKey) {
+            content.image = cachedImage
         } else {
             content.image = UIImage(systemName: "music.note")
-            content.imageProperties.tintColor = .secondaryLabel
+            if let url = song.url {
+                DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                    let asset = AVAsset(url: url)
+                    var image: UIImage?
+                    if let artworkItem = asset.commonMetadata.first(where: { $0.commonKey == .commonKeyArtwork }),
+                       let data = artworkItem.dataValue {
+                        image = UIImage(data: data)
+                    }
+                    if let art = image {
+                        self?.artworkCache.setObject(art, forKey: cacheKey)
+                        DispatchQueue.main.async {
+                            if let visibleCell = tableView.cellForRow(at: indexPath) {
+                                tableView.reloadRows(at: [indexPath], with: .none)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        content.imageProperties.cornerRadius = 4
+        content.imageProperties.maximumSize = CGSize(width: 40, height: 40)
+        
+        if indexPath.row == currentIndex {
+            content.textProperties.color = .systemBlue
+            let speaker = UIImageView(image: UIImage(systemName: "speaker.wave.3.fill"))
+            speaker.tintColor = .systemBlue
+            cell.accessoryView = speaker
+        } else if indexPath.row < currentIndex {
+            content.textProperties.color = .secondaryLabel
+            content.secondaryTextProperties.color = .tertiaryLabel
+            cell.accessoryView = nil
+        } else {
             content.textProperties.color = .label
+            cell.accessoryView = nil
         }
         
         cell.contentConfiguration = content
@@ -4039,46 +4095,90 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
     
     @objc private func openQueue() {
         let queueVC = QueueViewController()
-        let songs = getEffectiveQueue()
-        queueVC.songs = songs
+        let allSongs = getEffectiveQueue()
         
+        // Calculate global index
+        var globalIndex = 0
         if !playbackQueue.isEmpty {
-            queueVC.currentIndex = currentQueueIndex
+            globalIndex = currentQueueIndex
         } else if let current = currentSong {
-            queueVC.currentIndex = songs.firstIndex(where: { $0.id == current.id }) ?? 0
+            globalIndex = allSongs.firstIndex(where: { $0.id == current.id }) ?? 0
+        }
+        
+        // Filter: Current + Next 20
+        let startIndex = globalIndex
+        var currentEndIndex = min(startIndex + 21, allSongs.count)
+        
+        let slice: [Song]
+        if startIndex < allSongs.count {
+            slice = Array(allSongs[startIndex..<currentEndIndex])
+        } else {
+            slice = []
+        }
+        
+        queueVC.songs = slice
+        queueVC.currentIndex = 0 // Start at current
+        
+        if currentEndIndex < allSongs.count {
+            queueVC.onLoadMore = { [weak queueVC] in
+                guard let queueVC = queueVC else { return }
+                let nextEndIndex = min(currentEndIndex + 20, allSongs.count)
+                let newSongs = Array(allSongs[currentEndIndex..<nextEndIndex])
+                queueVC.songs.append(contentsOf: newSongs)
+                queueVC.tableView.reloadData()
+                currentEndIndex = nextEndIndex
+                
+                if currentEndIndex >= allSongs.count {
+                    queueVC.onLoadMore = nil
+                    queueVC.setupLoadMoreFooter()
+                }
+            }
         }
         
         queueVC.onSelect = { [weak self] index in
             guard let self = self else { return }
+            let realIndex = startIndex + index
             if self.playbackQueue.isEmpty {
-                self.playbackQueue = songs
+                self.playbackQueue = allSongs
             }
-            self.currentQueueIndex = index
-            self.loadSong(songs[index], andPlay: true)
+            if realIndex < self.playbackQueue.count {
+                self.currentQueueIndex = realIndex
+                self.loadSong(self.playbackQueue[realIndex], andPlay: true)
+            }
         }
         
         queueVC.onDelete = { [weak self] index in
             guard let self = self else { return }
+            let realIndex = startIndex + index
             
             if self.playbackQueue.isEmpty {
-                self.playbackQueue = songs
-                if let current = self.currentSong {
-                    self.currentQueueIndex = self.playbackQueue.firstIndex(where: { $0.id == current.id }) ?? 0
-                }
+                self.playbackQueue = allSongs
+                self.currentQueueIndex = globalIndex
             }
             
-            if self.playbackQueue.indices.contains(index) {
-                self.playbackQueue.remove(at: index)
-                if index < self.currentQueueIndex {
+            if self.playbackQueue.indices.contains(realIndex) {
+                self.playbackQueue.remove(at: realIndex)
+                if realIndex < self.currentQueueIndex {
                     self.currentQueueIndex -= 1
                 }
             }
         }
         
-        queueVC.onReorder = { [weak self] reorderedSongs, newCurrentIndex in
+        queueVC.onReorder = { [weak self] reorderedSlice, newLocalIndex in
             guard let self = self else { return }
-            self.playbackQueue = reorderedSongs
-            self.currentQueueIndex = newCurrentIndex
+            
+            if self.playbackQueue.isEmpty {
+                self.playbackQueue = allSongs
+                self.currentQueueIndex = globalIndex
+            }
+            
+            let rangeStart = self.currentQueueIndex
+            let rangeEnd = rangeStart + reorderedSlice.count
+            
+            if rangeEnd <= self.playbackQueue.count {
+                self.playbackQueue.replaceSubrange(rangeStart..<rangeEnd, with: reorderedSlice)
+                self.currentQueueIndex = rangeStart + newLocalIndex
+            }
         }
         
         let nav = UINavigationController(rootViewController: queueVC)
