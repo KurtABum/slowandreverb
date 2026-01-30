@@ -407,7 +407,7 @@ class AudioProcessor {
         
         // Add handler for Skip Forward Command (Siri)
         commandCenter.skipForwardCommand.isEnabled = true
-        commandCenter.skipForwardCommand.preferredIntervals = [15, 30, 60]
+        commandCenter.skipForwardCommand.preferredIntervals = [] // Empty to hide button but keep Siri
         commandCenter.skipForwardCommand.addTarget { [weak self] event in
             guard let self = self, let event = event as? MPSkipIntervalCommandEvent else { return .commandFailed }
             runOnMain {
@@ -422,7 +422,7 @@ class AudioProcessor {
 
         // Add handler for Skip Backward Command (Siri)
         commandCenter.skipBackwardCommand.isEnabled = true
-        commandCenter.skipBackwardCommand.preferredIntervals = [15, 30, 60]
+        commandCenter.skipBackwardCommand.preferredIntervals = [] // Empty to hide button but keep Siri
         commandCenter.skipBackwardCommand.addTarget { [weak self] event in
             guard let self = self, let event = event as? MPSkipIntervalCommandEvent else { return .commandFailed }
             runOnMain {
@@ -455,14 +455,7 @@ class AudioProcessor {
         commandCenter.changePlaybackRateCommand.isEnabled = false
         
         // Add handler for Dislike Command (Mapped to Slow + Reverb)
-        commandCenter.dislikeCommand.isEnabled = true
-        commandCenter.dislikeCommand.localizedTitle = "Cycle Presets"
-        commandCenter.dislikeCommand.addTarget { [weak self] _ in
-            runOnMain {
-                self?.onCyclePreset?()
-            }
-            return .success
-        }
+        commandCenter.dislikeCommand.isEnabled = false
         
         // Add handler for Like Command (Mapped to Cycle Presets)
         commandCenter.likeCommand.isEnabled = true
