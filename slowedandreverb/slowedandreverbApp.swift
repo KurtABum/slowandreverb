@@ -452,7 +452,7 @@ class AudioProcessor {
             return .success
         }
         
-        // Disable Playback Rate Command (User reported it does nothing on CarPlay)
+        // Disable Playback Rate Command (User reported it hidden behind menu)
         commandCenter.changePlaybackRateCommand.isEnabled = false
         
         // Add handler for Dislike Command (Mapped to Slow + Reverb)
@@ -460,6 +460,7 @@ class AudioProcessor {
         
         // Add handler for Like Command (Mapped to Cycle Presets)
         commandCenter.likeCommand.isEnabled = true
+        commandCenter.likeCommand.localizedTitle = "Change Presets"
         commandCenter.likeCommand.addTarget { [weak self] _ in
             runOnMain {
                 self?.onCyclePreset?()
@@ -3496,6 +3497,11 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
             resetButton.isHidden = false
             saveValuesButton.isHidden = true
             favoriteButton.isHidden = true
+            
+            // Update progress slider and labels for the new song
+            let duration = audioProcessor.getAudioDuration()
+            progressSlider.maximumValue = Float(duration)
+            durationLabel.text = formatTime(seconds: duration)
             
             togglePlayback()
         }
