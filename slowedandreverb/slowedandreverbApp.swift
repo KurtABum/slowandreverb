@@ -2048,6 +2048,8 @@ struct Song: Codable, Identifiable, Equatable {
     var savedSpeed: Float?
     var savedReverb: Float?
     var isFavorite: Bool?
+    var dateAdded: Date?
+    var lastPlayedDate: Date?
     
     var url: URL? {
         let paths = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)
@@ -2109,7 +2111,7 @@ class LibraryManager {
             let artist = metadata.first(where: { $0.commonKey == .commonKeyArtist })?.stringValue
             let album = metadata.first(where: { $0.commonKey == .commonKeyAlbumName })?.stringValue
             
-            let newSong = Song(title: title, artist: artist, album: album, fileName: finalDestinationURL.lastPathComponent, savedPitch: nil, savedSpeed: nil, savedReverb: nil)
+            let newSong = Song(title: title, artist: artist, album: album, fileName: finalDestinationURL.lastPathComponent, savedPitch: nil, savedSpeed: nil, savedReverb: nil, isFavorite: nil, dateAdded: Date(), lastPlayedDate: nil)
             songs.append(newSong)
             saveLibrary()
             
@@ -2164,13 +2166,15 @@ protocol LibraryViewControllerDelegate: AnyObject {
 }
 
 private enum LibrarySortOption: Int, CaseIterable {
-    case title, artist, album
+    case title, artist, album, recentlyAdded, recentlyPlayed
 
     var description: String {
         switch self {
         case .title: return "Title"
         case .artist: return "Artist"
         case .album: return "Album"
+        case .recentlyAdded: return "Recently Added"
+        case .recentlyPlayed: return "Recently Played"
         }
     }
 
@@ -2190,6 +2194,10 @@ private enum LibrarySortOption: Int, CaseIterable {
             let albumComp = (song1.album ?? "").localizedCaseInsensitiveCompare(song2.album ?? "")
             if albumComp != .orderedSame { return albumComp == .orderedAscending }
             return song1.title.localizedCaseInsensitiveCompare(song2.title) == .orderedAscending
+        case .recentlyAdded:
+            return (song1.dateAdded ?? Date.distantPast) > (song2.dateAdded ?? Date.distantPast)
+        case .recentlyPlayed:
+            return (song1.lastPlayedDate ?? Date.distantPast) > (song2.lastPlayedDate ?? Date.distantPast)
         }
     }
 }
@@ -2513,6 +2521,11 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
         let sortIndex = UserDefaults.standard.integer(forKey: sortOptionKey)
         let sortOption = LibrarySortOption(rawValue: sortIndex) ?? .title
         
+        if sortOption == .recentlyAdded || sortOption == .recentlyPlayed {
+            self.sections = [Section(title: sortOption.description, songs: displayedSongs)]
+            return
+        }
+        
         var newSections: [Section] = []
         
         for song in displayedSongs {
@@ -2521,6 +2534,7 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
             case .title: keyString = song.title
             case .artist: keyString = song.artist ?? ""
             case .album: keyString = song.album ?? ""
+            default: keyString = song.title
             }
             
             let firstChar = keyString.trimmingCharacters(in: .whitespacesAndNewlines).first.map { String($0).uppercased() } ?? "#"
@@ -2550,6 +2564,11 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
     }
     
     func sectionIndexTitles(for tableView: UITableView) -> [String]? {
+        let sortIndex = UserDefaults.standard.integer(forKey: sortOptionKey)
+        let sortOption = LibrarySortOption(rawValue: sortIndex) ?? .title
+        if sortOption == .recentlyAdded || sortOption == .recentlyPlayed {
+            return nil
+        }
         return sections.map { $0.title }
     }
     
@@ -4879,7 +4898,12 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
     
     private func loadSong(_ song: Song, andPlay: Bool) {
         guard let url = song.url else { return }
-        self.currentSong = song
+        
+        var updatedSong = song
+        updatedSong.lastPlayedDate = Date()
+        LibraryManager.shared.updateSong(updatedSong)
+        self.currentSong = updatedSong
+        
         UserDefaults.standard.set(song.id.uuidString, forKey: "lastSongID")
         
         // Apply saved values if they exist
