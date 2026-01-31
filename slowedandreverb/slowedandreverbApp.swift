@@ -328,6 +328,7 @@ class AudioProcessor {
 
     /// Returns the current playback time in seconds.
     func getCurrentTime() -> Double {
+        guard audioSampleRate > 0 else { return 0 }
         if let paused = pausedPosition, !isPlaying {
             return Double(paused) / audioSampleRate
         }
@@ -3201,7 +3202,85 @@ class QueueViewController: UITableViewController {
     }
 }
 
-class AudioEffectsViewController: UIViewController, SettingsViewControllerDelegate, LibraryViewControllerDelegate {
+protocol WelcomeViewControllerDelegate: AnyObject {
+    func welcomeViewControllerDidTapImport(_ controller: WelcomeViewController)
+    func welcomeViewControllerDidTapDemo(_ controller: WelcomeViewController)
+}
+
+class WelcomeViewController: UIViewController {
+    weak var delegate: WelcomeViewControllerDelegate?
+    
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .systemBackground
+        setupUI()
+    }
+    
+    private func setupUI() {
+        let titleLabel = UILabel()
+        titleLabel.text = "Welcome to Slow + Reverb"
+        titleLabel.font = .systemFont(ofSize: 28, weight: .bold)
+        titleLabel.textAlignment = .center
+        titleLabel.numberOfLines = 0
+        
+        let descriptionLabel = UILabel()
+        descriptionLabel.text = "To get started, add some songs to your library.\nSupports MP3 and M4A files."
+        descriptionLabel.font = .systemFont(ofSize: 17)
+        descriptionLabel.textColor = .secondaryLabel
+        descriptionLabel.textAlignment = .center
+        descriptionLabel.numberOfLines = 0
+        
+        var importConfig = UIButton.Configuration.filled()
+        importConfig.title = "Import Songs"
+        importConfig.image = UIImage(systemName: "square.and.arrow.down")
+        importConfig.imagePadding = 8
+        importConfig.cornerStyle = .capsule
+        importConfig.baseBackgroundColor = .systemBlue
+        
+        let importButton = UIButton(configuration: importConfig)
+        importButton.addTarget(self, action: #selector(importTapped), for: .touchUpInside)
+        
+        var demoConfig = UIButton.Configuration.tinted()
+        demoConfig.title = "Try Demo Song"
+        demoConfig.image = UIImage(systemName: "play.circle")
+        demoConfig.imagePadding = 8
+        demoConfig.cornerStyle = .capsule
+        
+        let demoButton = UIButton(configuration: demoConfig)
+        demoButton.addTarget(self, action: #selector(demoTapped), for: .touchUpInside)
+        
+        let stack = UIStackView(arrangedSubviews: [titleLabel, descriptionLabel, importButton, demoButton])
+        stack.axis = .vertical
+        stack.spacing = 20
+        stack.alignment = .center
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        
+        view.addSubview(stack)
+        
+        NSLayoutConstraint.activate([
+            stack.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            stack.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+            stack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 40),
+            stack.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -40),
+            
+            importButton.widthAnchor.constraint(equalToConstant: 200),
+            importButton.heightAnchor.constraint(equalToConstant: 50),
+            
+            demoButton.widthAnchor.constraint(equalToConstant: 200),
+            demoButton.heightAnchor.constraint(equalToConstant: 50)
+        ])
+    }
+    
+    @objc private func importTapped() {
+        delegate?.welcomeViewControllerDidTapImport(self)
+    }
+    
+    @objc private func demoTapped() {
+        delegate?.welcomeViewControllerDidTapDemo(self)
+    }
+}
+
+class AudioEffectsViewController: UIViewController, SettingsViewControllerDelegate, LibraryViewControllerDelegate, UIDocumentPickerDelegate, WelcomeViewControllerDelegate {
 
     // MARK: Properties
     
@@ -3340,6 +3419,7 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
             loadSavedState()
             hasLoadedInitialState = true
             updateBackgroundAnimation()
+            checkForEmptyLibrary()
         }
     }
 
@@ -3348,6 +3428,75 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
     private func applyTheme(color: UIColor) {
         view.window?.tintColor = color
         resetButton.setTitleColor(color, for: .normal)
+    }
+    
+    private func checkForEmptyLibrary() {
+        if LibraryManager.shared.songs.isEmpty {
+            let welcomeVC = WelcomeViewController()
+            welcomeVC.delegate = self
+            welcomeVC.isModalInPresentation = true
+            present(welcomeVC, animated: true)
+        }
+    }
+    
+    // MARK: - WelcomeViewControllerDelegate
+    
+    func welcomeViewControllerDidTapImport(_ controller: WelcomeViewController) {
+        controller.dismiss(animated: true) {
+            let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.audio], asCopy: false)
+            picker.delegate = self
+            picker.allowsMultipleSelection = true
+            self.present(picker, animated: true)
+        }
+    }
+    
+    func welcomeViewControllerDidTapDemo(_ controller: WelcomeViewController) {
+        controller.dismiss(animated: true) {
+            self.loadDemoSong()
+        }
+    }
+    
+    // MARK: - UIDocumentPickerDelegate
+    
+    func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+        for url in urls {
+            LibraryManager.shared.addSong(from: url)
+        }
+        if let song = LibraryManager.shared.songs.first {
+            self.loadSong(song, andPlay: true)
+        }
+    }
+    
+    private func loadDemoSong() {
+        guard let url = Bundle.main.url(forResource: "song", withExtension: "mp3") else {
+            let alert = UIAlertController(title: "Error", message: "Demo file 'song.mp3' not found in bundle.", preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: "OK", style: .default))
+            present(alert, animated: true)
+            return
+        }
+        
+        self.currentSong = nil
+        UserDefaults.standard.removeObject(forKey: "lastSongID")
+        
+        if let metadata = audioProcessor.loadAudioFile(url: url) {
+            songTitleLabel.text = metadata.title
+            artistNameLabel.text = metadata.artist ?? "Demo Artist"
+            artistNameLabel.isHidden = false
+            
+            let image = metadata.artwork ?? UIImage(systemName: "music.note")
+            albumArtImageView.image = image
+            updateBackground(with: image)
+            
+            let isDynamicThemeEnabled = UserDefaults.standard.bool(forKey: "isDynamicThemeEnabled")
+            applyDynamicTheme(isEnabled: isDynamicThemeEnabled, image: image)
+            
+            resetControlsState(isHidden: false)
+            resetButton.isHidden = false
+            saveValuesButton.isHidden = true
+            favoriteButton.isHidden = true
+            
+            togglePlayback()
+        }
     }
     
     private func setupAudioProcessorHandler() {
@@ -4162,6 +4311,7 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
     }
     
     private func formatTime(seconds: Double) -> String {
+        guard !seconds.isNaN && !seconds.isInfinite else { return "0:00" }
         let totalSeconds = Int(seconds)
         let minutes = totalSeconds / 60
         let remainingSeconds = totalSeconds % 60
