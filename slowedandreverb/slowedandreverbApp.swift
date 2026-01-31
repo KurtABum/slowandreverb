@@ -3403,6 +3403,7 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
         super.viewDidLoad()
         overrideUserInterfaceStyle = .dark // Lock the app in dark mode
         setupUI()
+        setupQuickActions()
         resetControlsState(isHidden: true)
         setupAudioProcessorHandler()
         setupStatePersistence()
@@ -5420,6 +5421,41 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
         }
     }
     
+    // MARK: - Quick Actions
+    
+    private func setupQuickActions() {
+        let shuffleLibrary = UIApplicationShortcutItem(
+            type: "com.slowedandreverb.shuffleLibrary",
+            localizedTitle: "Shuffle Library",
+            localizedSubtitle: nil,
+            icon: UIApplicationShortcutIcon(systemImageName: "shuffle"),
+            userInfo: nil
+        )
+        
+        let shuffleFavorites = UIApplicationShortcutItem(
+            type: "com.slowedandreverb.shuffleFavorites",
+            localizedTitle: "Shuffle Favorites",
+            localizedSubtitle: nil,
+            icon: UIApplicationShortcutIcon(systemImageName: "heart.fill"),
+            userInfo: nil
+        )
+        
+        UIApplication.shared.shortcutItems = [shuffleLibrary, shuffleFavorites]
+    }
+    
+    func handleShortcutItem(_ item: UIApplicationShortcutItem) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            if item.type == "com.slowedandreverb.shuffleLibrary" {
+                self.playShuffled(songs: LibraryManager.shared.songs)
+            } else if item.type == "com.slowedandreverb.shuffleFavorites" {
+                let favorites = LibraryManager.shared.songs.filter { $0.isFavorite ?? false }
+                if !favorites.isEmpty {
+                    self.playShuffled(songs: favorites)
+                }
+            }
+        }
+    }
+    
     // MARK: - CarPlay Support
     
     private func setupCarPlay() {
@@ -5497,12 +5533,11 @@ struct AudioEffectsAppPreview: UIViewControllerRepresentable {
     }
 }
 
-// Replaced the old PreviewProvider with the correct @main App structure.
 @main
-struct AudioEffectsApp: App {
-    init() {
-        // Register default values for app settings.
-        // This ensures that on the first launch, these features are enabled.
+class AppDelegate: UIResponder, UIApplicationDelegate {
+    var window: UIWindow?
+
+    func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
         UserDefaults.standard.register(defaults: [
             "isPitchLinked": true,
             "isDynamicBackgroundEnabled": true,
@@ -5523,12 +5558,29 @@ struct AudioEffectsApp: App {
             "isAutoLoadAddedSongEnabled": false,
             "slowedReverbSpeedPreset": 0.8
         ])
+
+        let window = UIWindow(frame: UIScreen.main.bounds)
+        let vc = AudioEffectsViewController()
+        window.rootViewController = vc
+        window.overrideUserInterfaceStyle = .dark
+        window.tintColor = ThemeManager.shared.currentTheme.uiColor
+        window.makeKeyAndVisible()
+        self.window = window
+        
+        if let shortcutItem = launchOptions?[.shortcutItem] as? UIApplicationShortcutItem {
+            vc.handleShortcutItem(shortcutItem)
+            return false
+        }
+
+        return true
     }
-    var body: some Scene {
-        WindowGroup {
-            AudioEffectsAppPreview()
-                .ignoresSafeArea()
-                .preferredColorScheme(.dark)
+
+    func application(_ application: UIApplication, performActionFor shortcutItem: UIApplicationShortcutItem, completionHandler: @escaping (Bool) -> Void) {
+        if let vc = window?.rootViewController as? AudioEffectsViewController {
+            vc.handleShortcutItem(shortcutItem)
+            completionHandler(true)
+        } else {
+            completionHandler(false)
         }
     }
 }
