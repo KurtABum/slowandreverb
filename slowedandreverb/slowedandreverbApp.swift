@@ -2492,6 +2492,7 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
         let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.audio, .folder], asCopy: false) // We copy manually
         picker.delegate = self
         picker.allowsMultipleSelection = true
+        picker.overrideUserInterfaceStyle = .dark
         present(picker, animated: true)
     }
     
@@ -3446,6 +3447,7 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
             let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.audio], asCopy: false)
             picker.delegate = self
             picker.allowsMultipleSelection = true
+            picker.overrideUserInterfaceStyle = .dark
             self.present(picker, animated: true)
         }
     }
@@ -5496,6 +5498,7 @@ struct AudioEffectsApp: App {
         // Register default values for app settings.
         // This ensures that on the first launch, these features are enabled.
         UserDefaults.standard.register(defaults: [
+            "isPitchLinked": true,
             "isDynamicBackgroundEnabled": true,
             "isAnimatedBackgroundEnabled": true,
             "isDynamicThemeEnabled": true,
@@ -5517,7 +5520,9 @@ struct AudioEffectsApp: App {
     }
     var body: some Scene {
         WindowGroup {
-            AudioEffectsAppPreview().ignoresSafeArea()
+            AudioEffectsAppPreview()
+                .ignoresSafeArea()
+                .preferredColorScheme(.dark)
         }
     }
 }
