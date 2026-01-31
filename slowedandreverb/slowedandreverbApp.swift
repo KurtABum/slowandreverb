@@ -459,7 +459,6 @@ class AudioProcessor {
         
         // Add handler for Like Command (Mapped to Cycle Presets)
         commandCenter.likeCommand.isEnabled = true
-        commandCenter.likeCommand.localizedTitle = "Cycle Presets"
         commandCenter.likeCommand.addTarget { [weak self] _ in
             runOnMain {
                 self?.onCyclePreset?()
