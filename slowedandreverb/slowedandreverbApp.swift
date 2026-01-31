@@ -2750,6 +2750,28 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
                 self.loadSongs()
             }
             
+            var menuItems: [UIMenuElement] = [playNextAction, infoAction, favoriteAction]
+            
+            if let artist = song.artist, !artist.isEmpty {
+                let searchArtistAction = UIAction(title: "Search Artist", image: UIImage(systemName: "magnifyingglass")) { [weak self] _ in
+                    guard let self = self else { return }
+                    self.searchController.isActive = true
+                    self.searchController.searchBar.text = artist
+                    self.updateSearchResults(for: self.searchController)
+                }
+                menuItems.append(searchArtistAction)
+            }
+            
+            if let album = song.album, !album.isEmpty {
+                let searchAlbumAction = UIAction(title: "Search Album", image: UIImage(systemName: "magnifyingglass")) { [weak self] _ in
+                    guard let self = self else { return }
+                    self.searchController.isActive = true
+                    self.searchController.searchBar.text = album
+                    self.updateSearchResults(for: self.searchController)
+                }
+                menuItems.append(searchAlbumAction)
+            }
+            
             let deleteAction = UIAction(title: "Delete", image: UIImage(systemName: "trash"), attributes: .destructive) { [weak self] _ in
                 guard let self = self else { return }
                 let alert = UIAlertController(title: "Delete Song", message: "Are you sure you want to delete \"\(song.title)\"?", preferredStyle: .alert)
@@ -2763,7 +2785,9 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
                 self.present(alert, animated: true)
             }
             
-            return UIMenu(title: "", children: [playNextAction, infoAction, favoriteAction, deleteAction])
+            menuItems.append(deleteAction)
+            
+            return UIMenu(title: "", children: menuItems)
         }
     }
     
