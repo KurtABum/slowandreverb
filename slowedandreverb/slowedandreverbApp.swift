@@ -2216,6 +2216,7 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
     
     private var deleteButton: UIBarButtonItem?
     private let artworkCache = NSCache<NSString, UIImage>()
+    var exactSearchFilter: (field: String, value: String)?
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -2341,7 +2342,26 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
     
     func updateSearchResults(for searchController: UISearchController) {
         let searchBar = searchController.searchBar
-        filterContentForSearchText(searchBar.text!)
+        if let exactFilter = exactSearchFilter, searchBar.text == exactFilter.value {
+            filterContentForExactMatch(field: exactFilter.field, value: exactFilter.value)
+        } else {
+            if exactSearchFilter != nil { exactSearchFilter = nil }
+            filterContentForSearchText(searchBar.text!)
+        }
+    }
+    
+    private func filterContentForExactMatch(field: String, value: String) {
+        let sourceSongs = showFavoritesOnly ? LibraryManager.shared.songs.filter { $0.isFavorite ?? false } : LibraryManager.shared.songs
+        displayedSongs = sourceSongs.filter { song in
+            if field == "artist" {
+                return (song.artist ?? "").localizedCaseInsensitiveCompare(value) == .orderedSame
+            } else if field == "album" {
+                return (song.album ?? "").localizedCaseInsensitiveCompare(value) == .orderedSame
+            }
+            return false
+        }
+        sortSongs()
+        tableView.reloadData()
     }
     
     private func filterContentForSearchText(_ searchText: String) {
@@ -2349,11 +2369,15 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
         if searchText.isEmpty {
             displayedSongs = sourceSongs
         } else {
+            let searchTerms = searchText.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }
             displayedSongs = sourceSongs.filter { (song: Song) -> Bool in
-                let titleMatch = song.title.range(of: searchText, options: .caseInsensitive) != nil
-                let artistMatch = (song.artist ?? "").range(of: searchText, options: .caseInsensitive) != nil
-                let albumMatch = (song.album ?? "").range(of: searchText, options: .caseInsensitive) != nil
-                return titleMatch || artistMatch || albumMatch
+                if searchTerms.isEmpty { return true }
+                return searchTerms.allSatisfy { term in
+                    let titleMatch = song.title.range(of: term, options: .caseInsensitive) != nil
+                    let artistMatch = (song.artist ?? "").range(of: term, options: .caseInsensitive) != nil
+                    let albumMatch = (song.album ?? "").range(of: term, options: .caseInsensitive) != nil
+                    return titleMatch || artistMatch || albumMatch
+                }
             }
         }
         sortSongs()
@@ -2755,6 +2779,7 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
             if let artist = song.artist, !artist.isEmpty {
                 let searchArtistAction = UIAction(title: "Search Artist", image: UIImage(systemName: "magnifyingglass")) { [weak self] _ in
                     guard let self = self else { return }
+                    self.exactSearchFilter = ("artist", artist)
                     self.searchController.isActive = true
                     self.searchController.searchBar.text = artist
                     self.updateSearchResults(for: self.searchController)
@@ -2765,6 +2790,7 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
             if let album = song.album, !album.isEmpty {
                 let searchAlbumAction = UIAction(title: "Search Album", image: UIImage(systemName: "magnifyingglass")) { [weak self] _ in
                     guard let self = self else { return }
+                    self.exactSearchFilter = ("album", album)
                     self.searchController.isActive = true
                     self.searchController.searchBar.text = album
                     self.updateSearchResults(for: self.searchController)
@@ -4136,11 +4162,14 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
         presentLibrary(withSearch: nil)
     }
     
-    private func presentLibrary(withSearch query: String?) {
+    private func presentLibrary(withSearch query: String?, exactField: String? = nil) {
         let playlistVC = LibraryViewController()
         playlistVC.delegate = self
         playlistVC.currentSongID = self.currentSong?.id
         playlistVC.initialSearchQuery = query
+        if let query = query, let field = exactField {
+            playlistVC.exactSearchFilter = (field, query)
+        }
         
         let navController = UINavigationController(rootViewController: playlistVC)
         if let sheet = navController.sheetPresentationController {
@@ -4257,14 +4286,14 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
         
         if let artist = song.artist, !artist.isEmpty {
             alert.addAction(UIAlertAction(title: "Search Artist", style: .default) { [weak self] _ in
-                self?.presentLibrary(withSearch: artist)
+                self?.presentLibrary(withSearch: artist, exactField: "artist")
             })
             hasAction = true
         }
         
         if let album = song.album, !album.isEmpty {
             alert.addAction(UIAlertAction(title: "Search Album", style: .default) { [weak self] _ in
-                self?.presentLibrary(withSearch: album)
+                self?.presentLibrary(withSearch: album, exactField: "album")
             })
             hasAction = true
         }
