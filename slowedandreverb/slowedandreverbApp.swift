@@ -2278,6 +2278,19 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
         loadSongs()
     }
     
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        let hasPendingSearch = initialSearchQuery != nil ||
+            (UserDefaults.standard.bool(forKey: "isRememberSearchEnabled") &&
+             !(UserDefaults.standard.string(forKey: "savedLibrarySearchTerm")?.isEmpty ?? true))
+        
+        if !hasPendingSearch && !hasScrolledToCurrentSong {
+            view.layoutIfNeeded()
+            scrollToCurrentSong()
+            hasScrolledToCurrentSong = true
+        }
+    }
+    
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         var didRestoreSearch = false
@@ -2405,7 +2418,7 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
             if let rowIndex = section.songs.firstIndex(where: { $0.id == currentID }) {
                 let indexPath = IndexPath(row: rowIndex, section: sectionIndex)
                 if tableView.numberOfSections > sectionIndex && tableView.numberOfRows(inSection: sectionIndex) > rowIndex {
-                    tableView.scrollToRow(at: indexPath, at: .top, animated: true)
+                    tableView.scrollToRow(at: indexPath, at: .top, animated: false)
                 }
                 return
             }
