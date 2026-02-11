@@ -2275,16 +2275,22 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
         super.viewDidLoad()
         setupUI()
         setupSearch()
+        
+        // Pre-populate search text to avoid flash of full content
+        if let query = initialSearchQuery {
+            searchController.searchBar.text = query
+        } else if UserDefaults.standard.bool(forKey: "isRememberSearchEnabled"),
+                  let savedQuery = UserDefaults.standard.string(forKey: "savedLibrarySearchTerm"),
+                  !savedQuery.isEmpty {
+            searchController.searchBar.text = savedQuery
+        }
+        
         loadSongs()
     }
     
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
-        let hasPendingSearch = initialSearchQuery != nil ||
-            (UserDefaults.standard.bool(forKey: "isRememberSearchEnabled") &&
-             !(UserDefaults.standard.string(forKey: "savedLibrarySearchTerm")?.isEmpty ?? true))
-        
-        if !hasPendingSearch && !hasScrolledToCurrentSong {
+        if !hasScrolledToCurrentSong {
             view.layoutIfNeeded()
             scrollToCurrentSong()
             hasScrolledToCurrentSong = true
@@ -2293,28 +2299,18 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
     
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-        var didRestoreSearch = false
-        if let query = initialSearchQuery {
-            searchController.isActive = true
-            searchController.searchBar.text = query
+        
+        // Activate search controller if text is present
+        if let text = searchController.searchBar.text, !text.isEmpty {
+            if !searchController.isActive {
+                searchController.isActive = true
+                searchController.searchBar.text = text
+            }
             initialSearchQuery = nil
-            didRestoreSearch = true
-        } else if UserDefaults.standard.bool(forKey: "isRememberSearchEnabled"),
-                  let savedQuery = UserDefaults.standard.string(forKey: "savedLibrarySearchTerm"),
-                  !savedQuery.isEmpty {
-            searchController.isActive = true
-            searchController.searchBar.text = savedQuery
-            didRestoreSearch = true
         }
         
         if !hasScrolledToCurrentSong {
-            if didRestoreSearch {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
-                    self?.scrollToCurrentSong()
-                }
-            } else {
-                scrollToCurrentSong()
-            }
+            scrollToCurrentSong()
             hasScrolledToCurrentSong = true
         }
     }
@@ -2428,6 +2424,7 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
     private func setupSearch() {
         searchController.searchResultsUpdater = self
         searchController.obscuresBackgroundDuringPresentation = false
+        searchController.hidesNavigationBarDuringPresentation = false
         searchController.searchBar.placeholder = "Search Songs"
         navigationItem.searchController = searchController
         definesPresentationContext = true
@@ -2600,7 +2597,10 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
     }
     
     private func loadSongs() {
-        if let searchText = searchController.searchBar.text, !searchText.isEmpty {
+        let searchText = searchController.searchBar.text ?? ""
+        if let exactFilter = exactSearchFilter, searchText == exactFilter.value {
+            filterContentForExactMatch(field: exactFilter.field, value: exactFilter.value)
+        } else if !searchText.isEmpty {
             filterContentForSearchText(searchText)
         } else {
             if showFavoritesOnly {
@@ -4469,22 +4469,22 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
         }
         
         let navController = UINavigationController(rootViewController: libraryVC)
+        
+        if self.isPlayingFromFavorites && query == nil {
+            let favoritesVC = LibraryViewController()
+            favoritesVC.showFavoritesOnly = true
+            favoritesVC.delegate = self
+            favoritesVC.currentSongID = self.currentSong?.id
+            navController.viewControllers = [libraryVC, favoritesVC]
+        }
+        
         if let sheet = navController.sheetPresentationController {
             sheet.detents = [.large(), .medium()]
             sheet.prefersGrabberVisible = true
             sheet.selectedDetentIdentifier = .large
         }
         
-        present(navController, animated: true) { [weak self] in
-            guard let self = self else { return }
-            if self.isPlayingFromFavorites && query == nil {
-                let favoritesVC = LibraryViewController()
-                favoritesVC.showFavoritesOnly = true
-                favoritesVC.delegate = self
-                favoritesVC.currentSongID = self.currentSong?.id
-                navController.pushViewController(favoritesVC, animated: true)
-            }
-        }
+        present(navController, animated: true)
     }
     
     @objc private func openQueue() {
