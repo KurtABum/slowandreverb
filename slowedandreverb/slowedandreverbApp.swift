@@ -3290,6 +3290,7 @@ class QueueViewController: UITableViewController {
         } else if sourceIndexPath.row > currentIndex && destinationIndexPath.row <= currentIndex {
             currentIndex += 1
         }
+        onReorder?(songs, currentIndex)
     }
 }
 
@@ -4552,7 +4553,7 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
                 self.currentQueueIndex = globalIndex
             }
             
-            let rangeStart = self.currentQueueIndex
+            let rangeStart = startIndex
             let rangeEnd = rangeStart + reorderedSlice.count
             
             if rangeEnd <= self.playbackQueue.count {
