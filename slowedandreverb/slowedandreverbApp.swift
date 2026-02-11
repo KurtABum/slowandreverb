@@ -2260,7 +2260,7 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
         
         title = showFavoritesOnly ? "Favorites" : "Library"
         
-        if !showFavoritesOnly {
+        if !showFavoritesOnly || navigationController?.viewControllers.first == self {
             navigationItem.leftBarButtonItem = UIBarButtonItem(barButtonSystemItem: .close, target: self, action: #selector(dismissView))
         }
         updateRightBarButtons()
@@ -2301,6 +2301,17 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
             favoritesButton.configuration = favConfig
             favoritesButton.addTarget(self, action: #selector(favoritesTapped), for: .touchUpInside)
             stackView.addArrangedSubview(favoritesButton)
+        } else if navigationController?.viewControllers.first == self {
+            let libraryButton = UIButton(type: .system)
+            var libConfig = UIButton.Configuration.filled()
+            libConfig.title = "Library"
+            libConfig.image = UIImage(systemName: "music.note.list")
+            libConfig.imagePadding = 8
+            libConfig.baseBackgroundColor = .systemBlue
+            libConfig.baseForegroundColor = .white
+            libraryButton.configuration = libConfig
+            libraryButton.addTarget(self, action: #selector(allSongsTapped), for: .touchUpInside)
+            stackView.addArrangedSubview(libraryButton)
         }
         
         NSLayoutConstraint.activate([
@@ -2412,6 +2423,14 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
         favoritesVC.delegate = delegate
         favoritesVC.currentSongID = currentSongID
         navigationController?.pushViewController(favoritesVC, animated: true)
+    }
+    
+    @objc private func allSongsTapped() {
+        let libraryVC = LibraryViewController()
+        libraryVC.showFavoritesOnly = false
+        libraryVC.delegate = delegate
+        libraryVC.currentSongID = currentSongID
+        navigationController?.pushViewController(libraryVC, animated: true)
     }
     
     @objc private func shuffleTapped() {
@@ -3389,7 +3408,10 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
     
     // Library state
     private var currentSong: Song?
+    private var accumulatedPlaybackTime: TimeInterval = 0
+    private var hasRecordedRecentlyPlayed = false
     private var isShuffling = false
+    private var isPlayingFromFavorites = false
     private var playbackQueue: [Song] = [] {
         didSet { MPPlayableContentManager.shared().reloadData() }
     }
@@ -4156,6 +4178,7 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
         UserDefaults.standard.set(queueIDs, forKey: "savedPlaybackQueue")
         UserDefaults.standard.set(currentQueueIndex, forKey: "savedQueueIndex")
         UserDefaults.standard.set(isShuffling, forKey: "savedIsShuffling")
+        UserDefaults.standard.set(isPlayingFromFavorites, forKey: "savedIsPlayingFromFavorites")
     }
     
     private func loadSavedState() {
@@ -4210,6 +4233,7 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
             self.playbackQueue = restoredQueue
             self.currentQueueIndex = UserDefaults.standard.integer(forKey: "savedQueueIndex")
             self.isShuffling = UserDefaults.standard.bool(forKey: "savedIsShuffling")
+            self.isPlayingFromFavorites = UserDefaults.standard.bool(forKey: "savedIsPlayingFromFavorites")
             
             // Validate index
             if !self.playbackQueue.isEmpty {
@@ -4279,6 +4303,7 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
         UserDefaults.standard.removeObject(forKey: "savedPlaybackQueue")
         UserDefaults.standard.removeObject(forKey: "savedQueueIndex")
         UserDefaults.standard.removeObject(forKey: "savedIsShuffling")
+        UserDefaults.standard.removeObject(forKey: "savedIsPlayingFromFavorites")
         
         UserDefaults.standard.synchronize()
         
@@ -4309,6 +4334,16 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
         audioProcessor.syncNowPlayingInfo()
         
         guard audioProcessor.isCurrentlyPlaying() else { return }
+        
+        accumulatedPlaybackTime += 0.1
+        if !hasRecordedRecentlyPlayed && accumulatedPlaybackTime >= 30.0 {
+            if var song = currentSong {
+                song.lastPlayedDate = Date()
+                LibraryManager.shared.updateSong(song)
+                currentSong = song
+                hasRecordedRecentlyPlayed = true
+            }
+        }
         
         // If song finishes, update play button icon
         if currentTime >= duration {
@@ -4349,22 +4384,32 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
     }
     
     private func presentLibrary(withSearch query: String?, exactField: String? = nil) {
-        let playlistVC = LibraryViewController()
-        playlistVC.delegate = self
-        playlistVC.currentSongID = self.currentSong?.id
-        playlistVC.initialSearchQuery = query
+        let libraryVC = LibraryViewController()
+        libraryVC.showFavoritesOnly = false
+        libraryVC.delegate = self
+        libraryVC.currentSongID = self.currentSong?.id
+        libraryVC.initialSearchQuery = query
         if let query = query, let field = exactField {
-            playlistVC.exactSearchFilter = (field, query)
+            libraryVC.exactSearchFilter = (field, query)
         }
         
-        let navController = UINavigationController(rootViewController: playlistVC)
+        let navController = UINavigationController(rootViewController: libraryVC)
         if let sheet = navController.sheetPresentationController {
             sheet.detents = [.large(), .medium()]
             sheet.prefersGrabberVisible = true
             sheet.selectedDetentIdentifier = .large
         }
         
-        present(navController, animated: true)
+        present(navController, animated: true) { [weak self] in
+            guard let self = self else { return }
+            if self.isPlayingFromFavorites && query == nil {
+                let favoritesVC = LibraryViewController()
+                favoritesVC.showFavoritesOnly = true
+                favoritesVC.delegate = self
+                favoritesVC.currentSongID = self.currentSong?.id
+                navController.pushViewController(favoritesVC, animated: true)
+            }
+        }
     }
     
     @objc private func openQueue() {
@@ -4755,6 +4800,7 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
         
         // Clear state variables and saved data for the last song
         currentSong = nil
+        isPlayingFromFavorites = false
         UserDefaults.standard.removeObject(forKey: "lastSongID")
         UserDefaults.standard.removeObject(forKey: "lastPlaybackPosition")
     }
@@ -5066,10 +5112,9 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
     private func loadSong(_ song: Song, andPlay: Bool) {
         guard let url = song.url else { return }
         
-        var updatedSong = song
-        updatedSong.lastPlayedDate = Date()
-        LibraryManager.shared.updateSong(updatedSong)
-        self.currentSong = updatedSong
+        self.currentSong = song
+        self.accumulatedPlaybackTime = 0
+        self.hasRecordedRecentlyPlayed = false
         
         UserDefaults.standard.set(song.id.uuidString, forKey: "lastSongID")
         
@@ -5156,12 +5201,14 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
     
     func libraryViewController(_ controller: LibraryViewController, didSelectSong song: Song, in songs: [Song]) {
         isShuffling = false
+        isPlayingFromFavorites = controller.showFavoritesOnly
         playbackQueue = songs
         currentQueueIndex = songs.firstIndex(where: { $0.id == song.id }) ?? 0
         loadSong(song, andPlay: true)
     }
     
     func libraryViewController(_ controller: LibraryViewController, didTapShuffleWith songs: [Song]) {
+        isPlayingFromFavorites = controller.showFavoritesOnly
         playShuffled(songs: songs)
     }
     
@@ -5455,10 +5502,12 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
     func handleShortcutItem(_ item: UIApplicationShortcutItem) {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
             if item.type == "com.slowedandreverb.shuffleLibrary" {
+                self.isPlayingFromFavorites = false
                 self.playShuffled(songs: LibraryManager.shared.songs)
             } else if item.type == "com.slowedandreverb.shuffleFavorites" {
                 let favorites = LibraryManager.shared.songs.filter { $0.isFavorite ?? false }
                 if !favorites.isEmpty {
+                    self.isPlayingFromFavorites = true
                     self.playShuffled(songs: favorites)
                 }
             }
