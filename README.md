@@ -1,8 +1,23 @@
-# Slowed + Reverb App
+# Slowed + Reverb
+
+<p align="center">
+  <img src="images/1.PNG" width="20%" />
+  <img src="images/2.PNG" width="20%" />
+  <img src="images/3.PNG" width="20%" />
+  <img src="images/4.PNG" width="20%" />
+</p>
 
 A powerful iOS audio processing application built with Swift, combining `UIKit` and `SwiftUI`. This app allows users to import audio files, apply real-time effects (tempo, pitch, reverb, EQ), and export the modified tracks with high fidelity.
 
 ## Key Features
+<p align="center">
+  
+  <img src="images/5.PNG" width="20%" />
+  <img src="images/6.PNG" width="20%" />
+  <img src="images/7.PNG" width="20%" />
+  <img src="images/8.PNG" width="20%" />
+</p>
+
 
 ### 🎛 Audio Effects & Control
 - **Link Pitch to Speed**: 
