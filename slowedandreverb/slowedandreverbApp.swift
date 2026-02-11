@@ -1248,6 +1248,7 @@ class SettingsViewController: UIViewController {
     var isStepperEnabled: Bool = false
     var isAutoLoadAddedSongEnabled: Bool = false
     var isShowPresetsEnabled: Bool = false
+    var isRememberSearchEnabled: Bool = false
     private let impactFeedbackGenerator = UIImpactFeedbackGenerator(style: .light)
     
     private let scrollView = UIScrollView()
@@ -1305,6 +1306,9 @@ class SettingsViewController: UIViewController {
     private let autoLoadAddedSongSwitch = UISwitch()
     private let autoLoadAddedSongLabel = UILabel()
     
+    private let rememberSearchSwitch = UISwitch()
+    private let rememberSearchLabel = UILabel()
+    
     private let showPresetsSwitch = UISwitch()
     private let showPresetsLabel = UILabel()
     
@@ -1330,6 +1334,8 @@ class SettingsViewController: UIViewController {
         // Load show presets state
         isShowPresetsEnabled = UserDefaults.standard.bool(forKey: "isShowPresetsEnabled")
         showPresetsSwitch.isOn = isShowPresetsEnabled
+        isRememberSearchEnabled = UserDefaults.standard.bool(forKey: "isRememberSearchEnabled")
+        rememberSearchSwitch.isOn = isRememberSearchEnabled
         updateAccurateSpeedToggleState()
     }
 
@@ -1537,6 +1543,17 @@ class SettingsViewController: UIViewController {
         rememberSettingsGroup.axis = .vertical
         rememberSettingsGroup.spacing = 4
         
+        // --- Remember Search Setting ---
+        rememberSearchLabel.text = "Remember Search"
+        rememberSearchSwitch.isOn = isRememberSearchEnabled
+        rememberSearchSwitch.addTarget(self, action: #selector(rememberSearchSwitchChanged), for: .valueChanged)
+        let rememberSearchStack = UIStackView(arrangedSubviews: [rememberSearchLabel, rememberSearchSwitch])
+        rememberSearchStack.spacing = 20
+        let rememberSearchDescription = createDescriptionLabel(with: "Keeps your search term and results active in the library until you clear them.")
+        let rememberSearchGroup = UIStackView(arrangedSubviews: [rememberSearchStack, rememberSearchDescription])
+        rememberSearchGroup.axis = .vertical
+        rememberSearchGroup.spacing = 4
+        
         // --- Stepper Buttons Setting ---
         stepperLabel.text = "Show Stepper Buttons"
         stepperSwitch.isOn = isStepperEnabled
@@ -1667,6 +1684,7 @@ class SettingsViewController: UIViewController {
         
         extrasGroups = [
             rememberSettingsGroup,
+            rememberSearchGroup,
             autoLoadAddedSongGroup,
             scanDuplicatesGroup
         ]
@@ -1868,6 +1886,14 @@ class SettingsViewController: UIViewController {
     
     @objc private func rememberSettingsSwitchChanged(_ sender: UISwitch) {
         delegate?.settingsViewController(self, didChangeRememberSettingsState: sender.isOn)
+        impactFeedbackGenerator.impactOccurred()
+    }
+    
+    @objc private func rememberSearchSwitchChanged(_ sender: UISwitch) {
+        UserDefaults.standard.set(sender.isOn, forKey: "isRememberSearchEnabled")
+        if !sender.isOn {
+            UserDefaults.standard.removeObject(forKey: "savedLibrarySearchTerm")
+        }
         impactFeedbackGenerator.impactOccurred()
     }
     
@@ -2254,12 +2280,28 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
     
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
+        var didRestoreSearch = false
         if let query = initialSearchQuery {
             searchController.isActive = true
             searchController.searchBar.text = query
             initialSearchQuery = nil
-        } else if !hasScrolledToCurrentSong {
-            scrollToCurrentSong()
+            didRestoreSearch = true
+        } else if UserDefaults.standard.bool(forKey: "isRememberSearchEnabled"),
+                  let savedQuery = UserDefaults.standard.string(forKey: "savedLibrarySearchTerm"),
+                  !savedQuery.isEmpty {
+            searchController.isActive = true
+            searchController.searchBar.text = savedQuery
+            didRestoreSearch = true
+        }
+        
+        if !hasScrolledToCurrentSong {
+            if didRestoreSearch {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+                    self?.scrollToCurrentSong()
+                }
+            } else {
+                scrollToCurrentSong()
+            }
             hasScrolledToCurrentSong = true
         }
     }
@@ -2380,6 +2422,16 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
     
     func updateSearchResults(for searchController: UISearchController) {
         let searchBar = searchController.searchBar
+        
+        if UserDefaults.standard.bool(forKey: "isRememberSearchEnabled") {
+            let text = searchBar.text ?? ""
+            if text.isEmpty {
+                UserDefaults.standard.removeObject(forKey: "savedLibrarySearchTerm")
+            } else {
+                UserDefaults.standard.set(text, forKey: "savedLibrarySearchTerm")
+            }
+        }
+        
         if let exactFilter = exactSearchFilter, searchBar.text == exactFilter.value {
             filterContentForExactMatch(field: exactFilter.field, value: exactFilter.value)
         } else {
