@@ -989,8 +989,8 @@ class PresetsSettingsViewController: UITableViewController {
         title = "Presets"
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "PresetCell")
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "SwitchCell")
-        navigationItem.rightBarButtonItem = UIBarButtonItem(barButtonSystemItem: .add, target: self, action: #selector(addPresetTapped))
-        navigationItem.leftBarButtonItem = editButtonItem
+        let addButton = UIBarButtonItem(barButtonSystemItem: .add, target: self, action: #selector(addPresetTapped))
+        navigationItem.rightBarButtonItems = [addButton, editButtonItem]
     }
     
     @objc private func addPresetTapped() {
@@ -1318,6 +1318,12 @@ class SettingsViewController: UIViewController {
     private let slowedReverbSpeedSegmentedControl = UISegmentedControl(items: ["0.80x", "0.85x", "0.90x"])
     private let slowedReverbSpeedLabel = UILabel()
     
+    private let slowedReverbReverbSegmentedControl = UISegmentedControl(items: ["0%", "20%", "40%"])
+    private let slowedReverbReverbLabel = UILabel()
+    
+    private let spedUpSpeedSegmentedControl = UISegmentedControl(items: ["1.10x", "1.20x", "1.30x"])
+    private let spedUpSpeedLabel = UILabel()
+    
     private var themeStack: UIStackView!
     
     private var interfaceGroups: [UIView] = []
@@ -1628,6 +1634,48 @@ class SettingsViewController: UIViewController {
         slowedReverbSpeedGroup.axis = .vertical
         slowedReverbSpeedGroup.spacing = 4
         
+        // --- Slowed + Reverb Reverb Setting ---
+        slowedReverbReverbLabel.text = "Slowed Preset Reverb"
+        
+        let savedReverb = UserDefaults.standard.float(forKey: "slowedReverbReverbPreset")
+        if abs(savedReverb - 40) < 1 {
+            slowedReverbReverbSegmentedControl.selectedSegmentIndex = 2
+        } else if abs(savedReverb - 20) < 1 {
+            slowedReverbReverbSegmentedControl.selectedSegmentIndex = 1
+        } else {
+            slowedReverbReverbSegmentedControl.selectedSegmentIndex = 0
+        }
+        
+        slowedReverbReverbSegmentedControl.addTarget(self, action: #selector(slowedReverbReverbChanged), for: .valueChanged)
+        
+        let slowedReverbReverbStack = UIStackView(arrangedSubviews: [slowedReverbReverbLabel, slowedReverbReverbSegmentedControl])
+        slowedReverbReverbStack.spacing = 20
+        let slowedReverbReverbDescription = createDescriptionLabel(with: "Select the reverb amount used for the 'Slowed + Reverb' preset.")
+        let slowedReverbReverbGroup = UIStackView(arrangedSubviews: [slowedReverbReverbStack, slowedReverbReverbDescription])
+        slowedReverbReverbGroup.axis = .vertical
+        slowedReverbReverbGroup.spacing = 4
+        
+        // --- Sped Up Speed Setting ---
+        spedUpSpeedLabel.text = "Sped Up Preset Speed"
+        
+        let savedSpedUpSpeed = UserDefaults.standard.float(forKey: "spedUpSpeedPreset")
+        if abs(savedSpedUpSpeed - 1.3) < 0.01 {
+            spedUpSpeedSegmentedControl.selectedSegmentIndex = 2
+        } else if abs(savedSpedUpSpeed - 1.1) < 0.01 {
+            spedUpSpeedSegmentedControl.selectedSegmentIndex = 0
+        } else {
+            spedUpSpeedSegmentedControl.selectedSegmentIndex = 1
+        }
+        
+        spedUpSpeedSegmentedControl.addTarget(self, action: #selector(spedUpSpeedChanged), for: .valueChanged)
+        
+        let spedUpSpeedStack = UIStackView(arrangedSubviews: [spedUpSpeedLabel, spedUpSpeedSegmentedControl])
+        spedUpSpeedStack.spacing = 20
+        let spedUpSpeedDescription = createDescriptionLabel(with: "Select the speed used for the 'Sped Up' preset.")
+        let spedUpSpeedGroup = UIStackView(arrangedSubviews: [spedUpSpeedStack, spedUpSpeedDescription])
+        spedUpSpeedGroup.axis = .vertical
+        spedUpSpeedGroup.spacing = 4
+        
         // --- Theme Color Picker (Moved up for grouping) ---
         let themeTitleLabel = UILabel()
         themeTitleLabel.text = "Theme Color"
@@ -1691,7 +1739,9 @@ class SettingsViewController: UIViewController {
         
         presetsGroups = [
             showPresetsGroup,
-            slowedReverbSpeedGroup
+            slowedReverbSpeedGroup,
+            slowedReverbReverbGroup,
+            spedUpSpeedGroup
         ]
         
         // --- Folder Buttons ---
@@ -1734,7 +1784,7 @@ class SettingsViewController: UIViewController {
         let presetsFolder = createFolderButton(title: "Presets", action: #selector(openPresetsFolder))
         
         // Add Manage Presets button to presetsGroups
-        let managePresetsButton = createFolderButton(title: "Manage Presets", action: #selector(openPresetsSettings))
+        let managePresetsButton = createFolderButton(title: "Manage Preset Cycle", action: #selector(openPresetsSettings))
         presetsGroups.insert(managePresetsButton, at: 0)
 
         // --- Main Settings Stack ---
@@ -1921,6 +1971,28 @@ class SettingsViewController: UIViewController {
         default: speed = 0.80
         }
         UserDefaults.standard.set(speed, forKey: "slowedReverbSpeedPreset")
+        impactFeedbackGenerator.impactOccurred()
+    }
+    
+    @objc private func slowedReverbReverbChanged(_ sender: UISegmentedControl) {
+        let reverb: Float
+        switch sender.selectedSegmentIndex {
+        case 1: reverb = 20.0
+        case 2: reverb = 40.0
+        default: reverb = 0.0
+        }
+        UserDefaults.standard.set(reverb, forKey: "slowedReverbReverbPreset")
+        impactFeedbackGenerator.impactOccurred()
+    }
+    
+    @objc private func spedUpSpeedChanged(_ sender: UISegmentedControl) {
+        let speed: Float
+        switch sender.selectedSegmentIndex {
+        case 0: speed = 1.10
+        case 2: speed = 1.30
+        default: speed = 1.20
+        }
+        UserDefaults.standard.set(speed, forKey: "spedUpSpeedPreset")
         impactFeedbackGenerator.impactOccurred()
     }
     
@@ -5370,14 +5442,16 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
         speedSlider.setValue(targetSpeed, animated: true)
         speedSliderChanged(speedSlider)
         
-        reverbSlider.setValue(40.0, animated: true)
+        let savedReverb = UserDefaults.standard.float(forKey: "slowedReverbReverbPreset")
+        reverbSlider.setValue(savedReverb, animated: true)
         reverbSliderChanged(reverbSlider)
         
         impactFeedbackGenerator.impactOccurred()
     }
 
     @objc private func applySpedUpPreset() {
-        speedSlider.setValue(1.2, animated: true)
+        let savedSpeed = UserDefaults.standard.float(forKey: "spedUpSpeedPreset")
+        speedSlider.setValue(savedSpeed > 0 ? savedSpeed : 1.2, animated: true)
         speedSliderChanged(speedSlider)
         
         reverbSlider.setValue(0.0, animated: true)
@@ -5689,7 +5763,9 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
             "isAutoPlayNextEnabled": false,
             "isStepperEnabled": false,
             "isAutoLoadAddedSongEnabled": false,
-            "slowedReverbSpeedPreset": 0.8
+            "slowedReverbSpeedPreset": 0.8,
+            "slowedReverbReverbPreset": 40.0,
+            "spedUpSpeedPreset": 1.2
         ])
 
         let window = UIWindow(frame: UIScreen.main.bounds)
