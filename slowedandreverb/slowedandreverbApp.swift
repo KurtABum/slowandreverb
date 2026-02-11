@@ -1783,7 +1783,11 @@ class SettingsViewController: UIViewController {
 
     @objc private func linkPitchSwitchChanged(_ sender: UISwitch) {
         updateAccurateSpeedToggleState()
-        let alert = UIAlertController(title: "Change Audio Engine", message: "Changing this setting requires restarting the audio engine. Playback will stop and reset to the beginning.", preferredStyle: .alert)
+        let message = sender.isOn
+            ? "Changing this setting requires restarting the audio engine. Playback will stop and reset to the beginning."
+            : "Unlinking pitch and speed allows for separate control but may impact sound and export quality. Changing this setting requires restarting the audio engine. Playback will stop and reset to the beginning."
+        
+        let alert = UIAlertController(title: "Change Audio Engine", message: message, preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "Cancel", style: .cancel, handler: { [weak self] _ in
             sender.setOn(!sender.isOn, animated: true)
             self?.updateAccurateSpeedToggleState()
