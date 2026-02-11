@@ -1278,6 +1278,7 @@ class SettingsViewController: UIViewController {
     
     private let accurateSpeedSwitch = UISwitch()
     private let accurateSpeedLabel = UILabel()
+    private var preciseSpeedGroup: UIStackView!
     
     private let exportButtonSwitch = UISwitch()
     private let exportButtonLabel = UILabel()
@@ -1328,6 +1329,7 @@ class SettingsViewController: UIViewController {
         // Load show presets state
         isShowPresetsEnabled = UserDefaults.standard.bool(forKey: "isShowPresetsEnabled")
         showPresetsSwitch.isOn = isShowPresetsEnabled
+        updateAccurateSpeedToggleState()
     }
 
     private func setupUI() {
@@ -1463,7 +1465,7 @@ class SettingsViewController: UIViewController {
         let accurateSpeedStack = UIStackView(arrangedSubviews: [accurateSpeedLabel, accurateSpeedSwitch])
         accurateSpeedStack.spacing = 20
         let accurateSpeedDescription = createDescriptionLabel(with: "When enabled, the speed slider will snap to 0.05x increments.")
-        let preciseSpeedGroup = UIStackView(arrangedSubviews: [accurateSpeedStack, accurateSpeedDescription])
+        preciseSpeedGroup = UIStackView(arrangedSubviews: [accurateSpeedStack, accurateSpeedDescription])
         preciseSpeedGroup.axis = .vertical
         preciseSpeedGroup.spacing = 4
         
@@ -1768,17 +1770,24 @@ class SettingsViewController: UIViewController {
         impactFeedbackGenerator.impactOccurred()
     }
 
+    private func updateAccurateSpeedToggleState() {
+        guard preciseSpeedGroup != nil else { return }
+        let isLinked = linkPitchSwitch.isOn
+        preciseSpeedGroup.isHidden = isLinked
+    }
+
     @objc private func linkPitchSwitchChanged(_ sender: UISwitch) {
+        updateAccurateSpeedToggleState()
         let alert = UIAlertController(title: "Change Audio Engine", message: "Changing this setting requires restarting the audio engine. Playback will stop and reset to the beginning.", preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel, handler: { _ in
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel, handler: { [weak self] _ in
             sender.setOn(!sender.isOn, animated: true)
+            self?.updateAccurateSpeedToggleState()
         }))
         alert.addAction(UIAlertAction(title: "Continue", style: .destructive, handler: { [weak self] _ in
             guard let self = self else { return }
             self.delegate?.settingsViewController(self, didChangeLinkPitchState: sender.isOn)
             self.impactFeedbackGenerator.impactOccurred()
         }))
-        
         present(alert, animated: true)
     }
     
