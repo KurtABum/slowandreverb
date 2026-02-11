@@ -1275,6 +1275,7 @@ class SettingsViewController: UIViewController {
     
     private let accuratePitchSwitch = UISwitch()
     private let accuratePitchLabel = UILabel()
+    private var accuratePitchGroup: UIStackView!
     
     private let accurateSpeedSwitch = UISwitch()
     private let accurateSpeedLabel = UILabel()
@@ -1457,6 +1458,7 @@ class SettingsViewController: UIViewController {
         let accuratePitchGroup = UIStackView(arrangedSubviews: [accuratePitchStack, accuratePitchDescription])
         accuratePitchGroup.axis = .vertical
         accuratePitchGroup.spacing = 4
+        self.accuratePitchGroup = accuratePitchGroup
         
         // --- Accurate Speed Setting ---
         accurateSpeedLabel.text = "Accurate Speed"
@@ -1771,9 +1773,12 @@ class SettingsViewController: UIViewController {
     }
 
     private func updateAccurateSpeedToggleState() {
-        guard preciseSpeedGroup != nil else { return }
+        guard preciseSpeedGroup != nil, accuratePitchGroup != nil else { return }
         let isLinked = linkPitchSwitch.isOn
-        preciseSpeedGroup.isHidden = isLinked
+        preciseSpeedGroup.alpha = 1.0
+        accurateSpeedSwitch.isEnabled = true
+        accuratePitchGroup.alpha = isLinked ? 0.5 : 1.0
+        accuratePitchSwitch.isEnabled = !isLinked
     }
 
     @objc private func linkPitchSwitchChanged(_ sender: UISwitch) {
