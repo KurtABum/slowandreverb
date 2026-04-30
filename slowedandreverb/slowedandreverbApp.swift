@@ -3579,7 +3579,11 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
     private var isShuffling = false
     private var isPlayingFromFavorites = false
     private var playbackQueue: [Song] = [] {
-        didSet { MPPlayableContentManager.shared().reloadData() }
+        didSet {
+            if #available(iOS 14.0, *) { } else {
+                MPPlayableContentManager.shared().reloadData()
+            }
+        }
     }
     private var currentQueueIndex: Int = -1
     private var currentPresetIndex: Int?
@@ -5727,9 +5731,15 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
     // MARK: - CarPlay Support
     
     private func setupCarPlay() {
-        MPPlayableContentManager.shared().dataSource = self
-        MPPlayableContentManager.shared().delegate = self
-        MPPlayableContentManager.shared().reloadData()
+        if #available(iOS 14.0, *) {
+            // MPPlayableContentManager is deprecated in iOS 14 and causes the system to spawn
+            // a dual "Now Playing" session with a list/hamburger menu on devices like iOS 15.
+            // Skipping this setup fixes the duplicate, un-slowed player bug on these versions.
+        } else {
+            MPPlayableContentManager.shared().dataSource = self
+            MPPlayableContentManager.shared().delegate = self
+            MPPlayableContentManager.shared().reloadData()
+        }
     }
     
     private func getEffectiveQueue() -> [Song] {
@@ -5829,17 +5839,22 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
             "spedUpSpeedPreset": 1.2
         ])
 
-        let window = UIWindow(frame: UIScreen.main.bounds)
-        let vc = AudioEffectsViewController()
-        window.rootViewController = vc
-        window.overrideUserInterfaceStyle = .dark
-        window.tintColor = ThemeManager.shared.currentTheme.uiColor
-        window.makeKeyAndVisible()
-        self.window = window
-        
-        if let shortcutItem = launchOptions?[.shortcutItem] as? UIApplicationShortcutItem {
-            vc.handleShortcutItem(shortcutItem)
-            return false
+        if #available(iOS 13.0, *) {
+            // UI setup is handled by SceneDelegate. Creating a window here spawns a duplicate ghost player
+            // which responds to lock screen controls as an un-slowed background player.
+        } else {
+            let window = UIWindow(frame: UIScreen.main.bounds)
+            let vc = AudioEffectsViewController()
+            window.rootViewController = vc
+            window.overrideUserInterfaceStyle = .dark
+            window.tintColor = ThemeManager.shared.currentTheme.uiColor
+            window.makeKeyAndVisible()
+            self.window = window
+            
+            if let shortcutItem = launchOptions?[.shortcutItem] as? UIApplicationShortcutItem {
+                vc.handleShortcutItem(shortcutItem)
+                return false
+            }
         }
 
         return true
