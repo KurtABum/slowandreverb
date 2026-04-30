@@ -1628,7 +1628,8 @@ class SettingsViewController: UIViewController {
         slowedReverbSpeedSegmentedControl.addTarget(self, action: #selector(slowedReverbSpeedChanged), for: .valueChanged)
         
         let slowedReverbSpeedStack = UIStackView(arrangedSubviews: [slowedReverbSpeedLabel, slowedReverbSpeedSegmentedControl])
-        slowedReverbSpeedStack.spacing = 20
+        slowedReverbSpeedStack.axis = .vertical
+        slowedReverbSpeedStack.spacing = 8
         let slowedReverbSpeedDescription = createDescriptionLabel(with: "Select the speed used for the 'Slowed + Reverb' preset.")
         let slowedReverbSpeedGroup = UIStackView(arrangedSubviews: [slowedReverbSpeedStack, slowedReverbSpeedDescription])
         slowedReverbSpeedGroup.axis = .vertical
@@ -1649,7 +1650,8 @@ class SettingsViewController: UIViewController {
         slowedReverbReverbSegmentedControl.addTarget(self, action: #selector(slowedReverbReverbChanged), for: .valueChanged)
         
         let slowedReverbReverbStack = UIStackView(arrangedSubviews: [slowedReverbReverbLabel, slowedReverbReverbSegmentedControl])
-        slowedReverbReverbStack.spacing = 20
+        slowedReverbReverbStack.axis = .vertical
+        slowedReverbReverbStack.spacing = 8
         let slowedReverbReverbDescription = createDescriptionLabel(with: "Select the reverb amount used for the 'Slowed + Reverb' preset.")
         let slowedReverbReverbGroup = UIStackView(arrangedSubviews: [slowedReverbReverbStack, slowedReverbReverbDescription])
         slowedReverbReverbGroup.axis = .vertical
@@ -1670,7 +1672,8 @@ class SettingsViewController: UIViewController {
         spedUpSpeedSegmentedControl.addTarget(self, action: #selector(spedUpSpeedChanged), for: .valueChanged)
         
         let spedUpSpeedStack = UIStackView(arrangedSubviews: [spedUpSpeedLabel, spedUpSpeedSegmentedControl])
-        spedUpSpeedStack.spacing = 20
+        spedUpSpeedStack.axis = .vertical
+        spedUpSpeedStack.spacing = 8
         let spedUpSpeedDescription = createDescriptionLabel(with: "Select the speed used for the 'Sped Up' preset.")
         let spedUpSpeedGroup = UIStackView(arrangedSubviews: [spedUpSpeedStack, spedUpSpeedDescription])
         spedUpSpeedGroup.axis = .vertical
@@ -2661,11 +2664,27 @@ class LibraryViewController: UIViewController, UITableViewDataSource, UITableVie
     }
     
     @objc private func addSongTapped() {
-        let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.audio, .folder], asCopy: false) // We copy manually
-        picker.delegate = self
-        picker.allowsMultipleSelection = true
-        picker.overrideUserInterfaceStyle = .dark
-        present(picker, animated: true)
+        let alert = UIAlertController(title: "Import", message: "What would you like to import?", preferredStyle: .actionSheet)
+        alert.addAction(UIAlertAction(title: "Audio Files", style: .default, handler: { [weak self] _ in
+            let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.audio])
+            picker.delegate = self
+            picker.allowsMultipleSelection = true
+            picker.overrideUserInterfaceStyle = .dark
+            self?.present(picker, animated: true)
+        }))
+        alert.addAction(UIAlertAction(title: "Entire Folder", style: .default, handler: { [weak self] _ in
+            let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.folder])
+            picker.delegate = self
+            picker.allowsMultipleSelection = false
+            picker.overrideUserInterfaceStyle = .dark
+            self?.present(picker, animated: true)
+        }))
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        
+        if let popover = alert.popoverPresentationController {
+            popover.barButtonItem = navigationItem.rightBarButtonItems?.first
+        }
+        present(alert, animated: true)
     }
     
     private func loadSongs() {
@@ -3624,11 +3643,29 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
     
     func welcomeViewControllerDidTapImport(_ controller: WelcomeViewController) {
         controller.dismiss(animated: true) {
-            let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.audio], asCopy: false)
-            picker.delegate = self
-            picker.allowsMultipleSelection = true
-            picker.overrideUserInterfaceStyle = .dark
-            self.present(picker, animated: true)
+            let alert = UIAlertController(title: "Import", message: "What would you like to import?", preferredStyle: .actionSheet)
+            alert.addAction(UIAlertAction(title: "Audio Files", style: .default, handler: { _ in
+                let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.audio])
+                picker.delegate = self
+                picker.allowsMultipleSelection = true
+                picker.overrideUserInterfaceStyle = .dark
+                self.present(picker, animated: true)
+            }))
+            alert.addAction(UIAlertAction(title: "Entire Folder", style: .default, handler: { _ in
+                let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.folder])
+                picker.delegate = self
+                picker.allowsMultipleSelection = false
+                picker.overrideUserInterfaceStyle = .dark
+                self.present(picker, animated: true)
+            }))
+            alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+            
+            if let popover = alert.popoverPresentationController {
+                popover.sourceView = self.view
+                popover.sourceRect = CGRect(x: self.view.bounds.midX, y: self.view.bounds.midY, width: 0, height: 0)
+                popover.permittedArrowDirections = []
+            }
+            self.present(alert, animated: true)
         }
     }
     
@@ -3911,8 +3948,11 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
         saveValuesConfig.title = "Save Values"
         saveValuesConfig.baseBackgroundColor = .secondarySystemFill
         saveValuesConfig.baseForegroundColor = .label
-        saveValuesConfig.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 20, bottom: 12, trailing: 20)
+        saveValuesConfig.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 10, bottom: 12, trailing: 10)
+        saveValuesConfig.titleLineBreakMode = .byTruncatingTail
         saveValuesButton.configuration = saveValuesConfig
+        saveValuesButton.titleLabel?.adjustsFontSizeToFitWidth = true
+        saveValuesButton.titleLabel?.minimumScaleFactor = 0.5
         saveValuesButton.addTarget(self, action: #selector(saveValuesTapped), for: .touchUpInside)
         
         // Favorite Button
@@ -3922,8 +3962,11 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
         favConfig.imagePadding = 8
         favConfig.baseBackgroundColor = .secondarySystemFill
         favConfig.baseForegroundColor = .label
-        favConfig.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 20, bottom: 12, trailing: 20)
+        favConfig.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 10, bottom: 12, trailing: 10)
+        favConfig.titleLineBreakMode = .byTruncatingTail
         favoriteButton.configuration = favConfig
+        favoriteButton.titleLabel?.adjustsFontSizeToFitWidth = true
+        favoriteButton.titleLabel?.minimumScaleFactor = 0.5
         favoriteButton.addTarget(self, action: #selector(toggleFavoriteTapped), for: .touchUpInside)
         
         // Repeat Button
@@ -3933,8 +3976,11 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
         repeatConfig.imagePadding = 8
         repeatConfig.baseBackgroundColor = .secondarySystemFill
         repeatConfig.baseForegroundColor = .label
-        repeatConfig.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 20, bottom: 12, trailing: 20)
+        repeatConfig.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 10, bottom: 12, trailing: 10)
+        repeatConfig.titleLineBreakMode = .byTruncatingTail
         repeatButton.configuration = repeatConfig
+        repeatButton.titleLabel?.adjustsFontSizeToFitWidth = true
+        repeatButton.titleLabel?.minimumScaleFactor = 0.5
         repeatButton.addTarget(self, action: #selector(toggleRepeatTapped), for: .touchUpInside)
         
         // Queue Button
@@ -3944,8 +3990,11 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
         queueConfig.imagePadding = 8
         queueConfig.baseBackgroundColor = .secondarySystemFill
         queueConfig.baseForegroundColor = .label
-        queueConfig.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 20, bottom: 12, trailing: 20)
+        queueConfig.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 10, bottom: 12, trailing: 10)
+        queueConfig.titleLineBreakMode = .byTruncatingTail
         queueButton.configuration = queueConfig
+        queueButton.titleLabel?.adjustsFontSizeToFitWidth = true
+        queueButton.titleLabel?.minimumScaleFactor = 0.5
         queueButton.addTarget(self, action: #selector(openQueue), for: .touchUpInside)
         
         let favRepeatStack = UIStackView(arrangedSubviews: [favoriteButton, repeatButton])
@@ -3968,8 +4017,11 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
         resetButtonConfig.title = "Reset"
         resetButtonConfig.baseBackgroundColor = .secondarySystemFill
         resetButtonConfig.baseForegroundColor = .label
-        resetButtonConfig.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 20, bottom: 12, trailing: 20)
+        resetButtonConfig.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 10, bottom: 12, trailing: 10)
+        resetButtonConfig.titleLineBreakMode = .byTruncatingTail
         resetButton.configuration = resetButtonConfig
+        resetButton.titleLabel?.adjustsFontSizeToFitWidth = true
+        resetButton.titleLabel?.minimumScaleFactor = 0.5
         resetButton.addTarget(self, action: #selector(resetSliders), for: .touchUpInside)
 
         // Export Button Setup
@@ -3977,8 +4029,11 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
         exportButtonConfig.title = "Export"
         exportButtonConfig.baseBackgroundColor = .secondarySystemFill
         exportButtonConfig.baseForegroundColor = .label
-        exportButtonConfig.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 20, bottom: 12, trailing: 20)
+        exportButtonConfig.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 10, bottom: 12, trailing: 10)
+        exportButtonConfig.titleLineBreakMode = .byTruncatingTail
         exportButton.configuration = exportButtonConfig
+        exportButton.titleLabel?.adjustsFontSizeToFitWidth = true
+        exportButton.titleLabel?.minimumScaleFactor = 0.5
         exportButton.addTarget(self, action: #selector(exportTapped), for: .touchUpInside)
         
         // Preset Buttons Setup
@@ -3986,16 +4041,22 @@ class AudioEffectsViewController: UIViewController, SettingsViewControllerDelega
         slowedReverbConfig.title = "Slowed + Reverb"
         slowedReverbConfig.baseBackgroundColor = .secondarySystemFill
         slowedReverbConfig.baseForegroundColor = .label
-        slowedReverbConfig.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 20, bottom: 12, trailing: 20)
+        slowedReverbConfig.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 10, bottom: 12, trailing: 10)
+        slowedReverbConfig.titleLineBreakMode = .byTruncatingTail
         slowedReverbButton.configuration = slowedReverbConfig
+        slowedReverbButton.titleLabel?.adjustsFontSizeToFitWidth = true
+        slowedReverbButton.titleLabel?.minimumScaleFactor = 0.5
         slowedReverbButton.addTarget(self, action: #selector(applySlowedReverbPreset), for: .touchUpInside)
         
         var spedUpConfig = UIButton.Configuration.filled()
         spedUpConfig.title = "Sped Up"
         spedUpConfig.baseBackgroundColor = .secondarySystemFill
         spedUpConfig.baseForegroundColor = .label
-        spedUpConfig.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 20, bottom: 12, trailing: 20)
+        spedUpConfig.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 10, bottom: 12, trailing: 10)
+        spedUpConfig.titleLineBreakMode = .byTruncatingTail
         spedUpButton.configuration = spedUpConfig
+        spedUpButton.titleLabel?.adjustsFontSizeToFitWidth = true
+        spedUpButton.titleLabel?.minimumScaleFactor = 0.5
         spedUpButton.addTarget(self, action: #selector(applySpedUpPreset), for: .touchUpInside)
         
         // Horizontal stack for Preset buttons
@@ -5785,6 +5846,44 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     }
 
     func application(_ application: UIApplication, performActionFor shortcutItem: UIApplicationShortcutItem, completionHandler: @escaping (Bool) -> Void) {
+        if let vc = window?.rootViewController as? AudioEffectsViewController {
+            vc.handleShortcutItem(shortcutItem)
+            completionHandler(true)
+        } else {
+            completionHandler(false)
+        }
+    }
+
+    // MARK: UISceneSession Lifecycle
+    @available(iOS 13.0, *)
+    func application(_ application: UIApplication, configurationForConnecting connectingSceneSession: UISceneSession, options: UIScene.ConnectionOptions) -> UISceneConfiguration {
+        let configuration = UISceneConfiguration(name: nil, sessionRole: connectingSceneSession.role)
+        configuration.delegateClass = SceneDelegate.self
+        return configuration
+    }
+}
+
+@available(iOS 13.0, *)
+class SceneDelegate: UIResponder, UIWindowSceneDelegate {
+    var window: UIWindow?
+
+    func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions) {
+        guard let windowScene = (scene as? UIWindowScene) else { return }
+        
+        let window = UIWindow(windowScene: windowScene)
+        let vc = AudioEffectsViewController()
+        window.rootViewController = vc
+        window.overrideUserInterfaceStyle = .dark
+        window.tintColor = ThemeManager.shared.currentTheme.uiColor
+        window.makeKeyAndVisible()
+        self.window = window
+        
+        if let shortcutItem = connectionOptions.shortcutItem {
+            vc.handleShortcutItem(shortcutItem)
+        }
+    }
+
+    func windowScene(_ windowScene: UIWindowScene, performActionFor shortcutItem: UIApplicationShortcutItem, completionHandler: @escaping (Bool) -> Void) {
         if let vc = window?.rootViewController as? AudioEffectsViewController {
             vc.handleShortcutItem(shortcutItem)
             completionHandler(true)
