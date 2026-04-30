@@ -459,13 +459,17 @@ class AudioProcessor {
         commandCenter.dislikeCommand.isEnabled = false
         
         // Add handler for Like Command (Mapped to Cycle Presets)
-        commandCenter.likeCommand.isEnabled = true
-        commandCenter.likeCommand.localizedTitle = "Change Presets"
-        commandCenter.likeCommand.addTarget { [weak self] _ in
-            runOnMain {
-                self?.onCyclePreset?()
+        if #available(iOS 16.0, *) {
+            commandCenter.likeCommand.isEnabled = true
+            commandCenter.likeCommand.localizedTitle = "Change Presets"
+            commandCenter.likeCommand.addTarget { [weak self] _ in
+                runOnMain {
+                    self?.onCyclePreset?()
+                }
+                return .success
             }
-            return .success
+        } else {
+            commandCenter.likeCommand.isEnabled = false
         }
         
         // Initially disable them; they will be enabled by the view controller
